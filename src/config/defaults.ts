@@ -40,6 +40,8 @@ export const DEFAULT_SETTINGS: Settings = {
   maxDeceleration: 30,
   fieldMap: "decode.webp",
   robotImage: "/robot.png",
+  robotCenterOffsetX: 0,
+  robotCenterOffsetY: 0,
   theme: "auto",
   showGhostPaths: false,
   showOnionLayers: false,

@@ -73,6 +73,22 @@ export function radiansToDegrees(radians: number) {
   return radians * (180 / Math.PI);
 }
 
+/**
+ * Remap a 0..1 path parameter through an optional linear-interpolation
+ * window [startT, endT]: 0 before the window, 1 after it, linear inside.
+ * Used for PedroPathing's linear heading start/end timing.
+ */
+export function remapInterpT(
+  t: number,
+  startT?: number | null,
+  endT?: number | null,
+): number {
+  const s = Number.isFinite(startT as number) ? (startT as number) : 0;
+  const e = Number.isFinite(endT as number) ? (endT as number) : 1;
+  if (e <= s) return t >= e ? 1 : 0;
+  return Math.max(0, Math.min(1, (t - s) / (e - s)));
+}
+
 export function lerp(ratio: number, start: number, end: number) {
   return start + (end - start) * ratio;
 }

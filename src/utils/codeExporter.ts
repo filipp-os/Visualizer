@@ -30,6 +30,21 @@ function sanitizeIdentifier(input: string | undefined, fallback: string): string
   return cleaned;
 }
 
+// Extra trailing args for setLinearHeadingInterpolation when the path uses
+// PedroPathing's optional start/end timing (path parameter 0..1).
+function linearInterpTimingArgs(endPoint: any): string {
+  if (endPoint?.heading !== "linear") return "";
+  const hasStart = Number.isFinite(endPoint.startT) && endPoint.startT > 0;
+  const hasEnd = Number.isFinite(endPoint.endT) && endPoint.endT < 1;
+  if (hasStart) {
+    const s = Number(endPoint.startT);
+    const e = Number.isFinite(endPoint.endT) ? Number(endPoint.endT) : 1;
+    return `, ${s}, ${e}`;
+  }
+  if (hasEnd) return `, ${Number(endPoint.endT)}`;
+  return "";
+}
+
 function buildPathSegmentCode(line: Line, startExpression: string): string {
   const headingTypeToFunctionName = {
     constant: "setConstantHeadingInterpolation",
@@ -47,11 +62,12 @@ function buildPathSegmentCode(line: Line, startExpression: string): string {
     ? `${startExpression},\n            ${controlPoints},\n            new Pose(${line.endPoint.x.toFixed(3)}, ${line.endPoint.y.toFixed(3)})`
     : `${startExpression},\n            new Pose(${line.endPoint.x.toFixed(3)}, ${line.endPoint.y.toFixed(3)})`;
 
+  const linearTiming = linearInterpTimingArgs(line.endPoint);
   const headingConfig =
     line.endPoint.heading === "constant"
       ? `Math.toRadians(${line.endPoint.degrees ?? 0})`
       : line.endPoint.heading === "linear"
-        ? `Math.toRadians(${line.endPoint.startDeg ?? 0}), Math.toRadians(${line.endPoint.endDeg ?? 0})`
+        ? `Math.toRadians(${line.endPoint.startDeg ?? 0}), Math.toRadians(${line.endPoint.endDeg ?? 0})${linearTiming}`
         : "";
 
   const reverseConfig = line.endPoint.reverse ? "\n          .setReversed()" : "";
@@ -443,7 +459,7 @@ export async function generateSequentialCommandCode(
       if (line.endPoint.heading === "constant") {
         headingConfig = `setConstantHeadingInterpolation(${endPoseName}.getHeading())`;
       } else if (line.endPoint.heading === "linear") {
-        headingConfig = `setLinearHeadingInterpolation(${startPoseName}.getHeading(), ${endPoseName}.getHeading())`;
+        headingConfig = `setLinearHeadingInterpolation(${startPoseName}.getHeading(), ${endPoseName}.getHeading()${linearInterpTimingArgs(line.endPoint)})`;
       } else {
         headingConfig = `setTangentHeadingInterpolation()`;
       }

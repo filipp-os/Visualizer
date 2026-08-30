@@ -3,6 +3,7 @@ import {
   easeInOutQuad,
   shortestRotation,
   radiansToDegrees,
+  remapInterpT,
 } from "./math";
 import { getRobotCorners } from "./geometry";
 import type { Point, Line, TimelineEvent, BasePoint, Settings } from "../types";
@@ -182,7 +183,11 @@ export function calculateRobotState(
         robotHeading = -shortestRotation(
           currentLine.endPoint.startDeg,
           currentLine.endPoint.endDeg,
-          linePercent,
+          remapInterpT(
+            linePercent,
+            (currentLine.endPoint as any).startT,
+            (currentLine.endPoint as any).endT,
+          ),
         );
         break;
       case "constant":
@@ -459,7 +464,11 @@ export function generateGhostPathPoints(
         heading = shortestRotation(
           line.endPoint.startDeg,
           line.endPoint.endDeg,
-          t,
+          remapInterpT(
+            t,
+            (line.endPoint as any).startT,
+            (line.endPoint as any).endT,
+          ),
         );
       } else if (line.endPoint.heading === "constant") {
         heading = line.endPoint.degrees;
@@ -677,7 +686,11 @@ export function generateOnionLayers(
           heading = shortestRotation(
             line.endPoint.startDeg,
             line.endPoint.endDeg,
-            layerT,
+            remapInterpT(
+              layerT,
+              (line.endPoint as any).startT,
+              (line.endPoint as any).endT,
+            ),
           );
         } else if (line.endPoint.heading === "constant") {
           heading = -line.endPoint.degrees;

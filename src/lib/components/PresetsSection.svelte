@@ -1,9 +1,25 @@
 <script lang="ts">
   import type { SavedPosition, SavedHeading } from "../../types";
+  import HeadingProtractor from "./HeadingProtractor.svelte";
 
   export let positions: SavedPosition[] = [];
   export let headings: SavedHeading[] = [];
   export let collapsed: boolean = false;
+
+  // Which heading box has its protractor open, plus its anchor / preview point.
+  let prot: {
+    key: string;
+    anchor: HTMLElement;
+    previewPoint: { x: number; y: number } | null;
+  } | null = null;
+  function toggleProt(
+    key: string,
+    e: MouseEvent,
+    previewPoint: { x: number; y: number } | null,
+  ) {
+    if (prot?.key === key) prot = null;
+    else prot = { key, anchor: e.currentTarget as HTMLElement, previewPoint };
+  }
 
   // Drag a position/heading grip onto the timeline; double-click to apply it
   // to the end of the sequence / the last path. Wired up by ControlTab.
@@ -178,6 +194,30 @@
                 class="w-16 min-w-0 pl-1.5 rounded-md bg-white dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none text-xs"
               />
               <span>°</span>
+              <button
+                type="button"
+                title="Set with the protractor dial"
+                on:click|preventDefault={(e) =>
+                  toggleProt("pos:" + pos.id, e, { x: pos.x, y: pos.y })}
+                class="p-0.5 rounded text-sky-400 hover:text-sky-600"
+                class:text-sky-600={prot?.key === "pos:" + pos.id}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.8} stroke="currentColor" class="size-3.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18M12 21a9 9 0 0 1 0-18m0 18V3m0 9 6.5-4" />
+                </svg>
+              </button>
+              {#if prot?.key === "pos:" + pos.id}
+                <HeadingProtractor
+                  value={pos.heading ?? 0}
+                  anchor={prot.anchor}
+                  previewPoint={prot.previewPoint}
+                  onInput={(d) => {
+                    pos.heading = d;
+                    positions = [...positions];
+                  }}
+                  onClose={() => (prot = null)}
+                />
+              {/if}
             {/if}
           </label>
         </div>
@@ -266,6 +306,29 @@
               bind:value={h.degrees}
               class="w-full min-w-0 pl-1.5 rounded-md bg-white dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none"
             />
+            <button
+              type="button"
+              title="Set with the protractor dial"
+              on:click|preventDefault={(e) => toggleProt("head:" + h.id, e, null)}
+              class="p-0.5 rounded text-purple-400 hover:text-purple-600 shrink-0"
+              class:text-purple-600={prot?.key === "head:" + h.id}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.8} stroke="currentColor" class="size-3.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18M12 21a9 9 0 0 1 0-18m0 18V3m0 9 6.5-4" />
+              </svg>
+            </button>
+            {#if prot?.key === "head:" + h.id}
+              <HeadingProtractor
+                value={h.degrees ?? 0}
+                anchor={prot.anchor}
+                previewPoint={null}
+                onInput={(d) => {
+                  h.degrees = d;
+                  headings = [...headings];
+                }}
+                onClose={() => (prot = null)}
+              />
+            {/if}
           </div>
         </div>
       {/each}

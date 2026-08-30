@@ -42,6 +42,12 @@ type Point = BasePoint &
         heading: "linear";
         startDeg: number;
         endDeg: number;
+        customStartHeading?: boolean;
+        startHeadingLink?: any;
+        endHeadingLink?: any;
+        // PedroPathing linear-interpolation timing (path parameter 0..1).
+        startT?: number;
+        endT?: number;
         degrees?: never;
         reverse?: never;
       }
@@ -109,6 +115,8 @@ interface Settings {
   fieldMap: string;
   customFieldImage?: string; // Base64 data URL for custom field image
   robotImage?: string;
+  robotCenterOffsetX?: number; // drivetrain-center offset from image center, inches
+  robotCenterOffsetY?: number;
   theme: "light" | "dark" | "auto";
   showGhostPaths?: boolean; // Show collision overlays via ghost paths
   showOnionLayers?: boolean; // Show robot body at intervals along the path

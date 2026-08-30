@@ -437,6 +437,8 @@
           locked={line.locked}
           {previousEndHeading}
           {savedHeadings}
+          pointXY={line.endPoint}
+          prevXY={idx === 0 ? startPoint : lines[idx - 1]?.endPoint ?? null}
           on:change={() => {
             // Force reactivity so timeline recalculates immediately
             lines = [...lines];

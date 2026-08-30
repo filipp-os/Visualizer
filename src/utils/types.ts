@@ -19,6 +19,11 @@ export type Point = BasePoint &
         customStartHeading?: boolean; // if false/unset, startDeg auto-follows the previous path's end heading
         startHeadingLink?: PresetLink; // set when startDeg came from a saved heading/position
         endHeadingLink?: PresetLink; // set when endDeg came from a saved heading/position
+        // Optional PedroPathing linear-interpolation timing (path parameter
+        // 0..1). Before startT the robot holds startDeg, after endT it holds
+        // endDeg, and it interpolates linearly in between.
+        startT?: number;
+        endT?: number;
         degrees?: never;
         reverse?: never;
       }
@@ -99,6 +104,8 @@ export interface Settings {
   fieldMap: string;
   customFieldImage?: string; // Base64 data URL for custom field image
   robotImage?: string;
+  robotCenterOffsetX?: number; // drivetrain-center offset from image center, inches
+  robotCenterOffsetY?: number;
   theme: "light" | "dark" | "auto";
   showGhostPaths?: boolean; // Show collision overlays via ghost paths
   showOnionLayers?: boolean; // Show robot body at intervals along the path

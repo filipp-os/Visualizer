@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import type { SavedHeading } from "../../types";
   import PresetPicker from "./PresetPicker.svelte";
+  import HeadingProtractor from "./HeadingProtractor.svelte";
 
   export let endPoint: any;
   export let locked: boolean = false;
@@ -11,6 +12,10 @@
   // heading unless the user opts into a custom one.
   export let previousEndHeading: number = 0;
   export let savedHeadings: SavedHeading[] = [];
+  // Field points (inches) so the protractor can preview the heading on the
+  // robot: `prevXY` for the start-heading box, `pointXY` for end/constant.
+  export let prevXY: { x: number; y: number } | null = null;
+  export let pointXY: { x: number; y: number } | null = null;
   const dispatch = createEventDispatcher();
 
   let startPickerOpen = false;
@@ -19,6 +24,40 @@
   let startPickerBtn: HTMLButtonElement;
   let endPickerBtn: HTMLButtonElement;
   let constPickerBtn: HTMLButtonElement;
+
+  // Which heading box (if any) has its protractor popup open.
+  let protractorFor: "start" | "end" | "const" | null = null;
+  let startProtBtn: HTMLButtonElement;
+  let endProtBtn: HTMLButtonElement;
+  let constProtBtn: HTMLButtonElement;
+
+  // Linear interpolation start/end timing (0..1) — optional, kept compact.
+  let showTiming = false;
+  $: timingActive =
+    (endPoint.startT != null && endPoint.startT > 0) ||
+    (endPoint.endT != null && endPoint.endT < 1);
+  $: if (timingActive) showTiming = true;
+
+  function clampT(v: string): number | undefined {
+    if (v === "" || v == null) return undefined;
+    const n = parseFloat(v);
+    if (!Number.isFinite(n)) return undefined;
+    return Math.max(0, Math.min(1, n));
+  }
+  function setStartT(e: Event) {
+    endPoint.startT = clampT((e.target as HTMLInputElement).value);
+    dispatch("change");
+  }
+  function setEndT(e: Event) {
+    endPoint.endT = clampT((e.target as HTMLInputElement).value);
+    dispatch("change");
+  }
+  function clearTiming() {
+    endPoint.startT = undefined;
+    endPoint.endT = undefined;
+    dispatch("change");
+    dispatch("commit");
+  }
 
   // Keep a linear path's start heading locked to whatever heading the robot
   // is already facing, unless the user has explicitly opted into a custom
@@ -146,6 +185,32 @@ With tangential heading, the heading follows the direction of the line."
               onClose={() => (startPickerOpen = false)}
             />
           {/if}
+          <button
+            type="button"
+            bind:this={startProtBtn}
+            title="Set with the protractor dial"
+            on:click={() => (protractorFor = protractorFor === "start" ? null : "start")}
+            class="p-0.5 rounded text-neutral-500 dark:text-neutral-400 hover:text-sky-600 dark:hover:text-sky-400"
+            class:text-sky-600={protractorFor === "start"}
+            disabled={locked}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.8} stroke="currentColor" class="size-3.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18M12 21a9 9 0 0 1 0-18m0 18V3m0 9 6.5-4" />
+            </svg>
+          </button>
+          {#if protractorFor === "start"}
+            <HeadingProtractor
+              value={endPoint.startDeg ?? 0}
+              anchor={startProtBtn}
+              previewPoint={prevXY}
+              onInput={(d) => {
+                endPoint.startDeg = d;
+                dispatch("change");
+              }}
+              onCommit={() => dispatch("commit")}
+              onClose={() => (protractorFor = null)}
+            />
+          {/if}
         {/if}
       {/if}
       <label class="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 ml-1">
@@ -232,6 +297,79 @@ With tangential heading, the heading follows the direction of the line."
             onClose={() => (endPickerOpen = false)}
           />
         {/if}
+        <button
+          type="button"
+          bind:this={endProtBtn}
+          title="Set with the protractor dial"
+          on:click={() => (protractorFor = protractorFor === "end" ? null : "end")}
+          class="p-0.5 rounded text-neutral-500 dark:text-neutral-400 hover:text-sky-600 dark:hover:text-sky-400"
+          class:text-sky-600={protractorFor === "end"}
+          disabled={locked}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.8} stroke="currentColor" class="size-3.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18M12 21a9 9 0 0 1 0-18m0 18V3m0 9 6.5-4" />
+          </svg>
+        </button>
+        {#if protractorFor === "end"}
+          <HeadingProtractor
+            value={endPoint.endDeg ?? 0}
+            anchor={endProtBtn}
+            previewPoint={pointXY}
+            onInput={(d) => {
+              endPoint.endDeg = d;
+              dispatch("change");
+            }}
+            onCommit={() => dispatch("commit")}
+            onClose={() => (protractorFor = null)}
+          />
+        {/if}
+      {/if}
+    </div>
+
+    <!-- Optional PedroPathing linear-interpolation timing (0..1 along path) -->
+    <div class="flex items-center gap-1 text-[10px] text-neutral-500 dark:text-neutral-400">
+      <button
+        type="button"
+        title="Linear interpolation start/end timing (0–1 along the path)"
+        on:click={() => (showTiming = !showTiming)}
+        class="p-0.5 rounded hover:text-sky-600 dark:hover:text-sky-400"
+        class:text-sky-500={timingActive}
+        disabled={locked}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={2} stroke="currentColor" class="size-3.5">
+          <circle cx="12" cy="12" r="9" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2" />
+        </svg>
+      </button>
+      {#if showTiming}
+        <span>t</span>
+        <input
+          class="w-11 pl-1 rounded bg-neutral-100 dark:bg-neutral-950 border-[0.5px] dark:border-neutral-700 focus:outline-none"
+          type="number" min="0" max="1" step="0.05" placeholder="0"
+          value={endPoint.startT ?? ""}
+          on:input={setStartT}
+          on:blur={() => dispatch("commit")}
+          title="Heading interpolation starts at this path fraction"
+          disabled={locked}
+        />
+        <span>–</span>
+        <input
+          class="w-11 pl-1 rounded bg-neutral-100 dark:bg-neutral-950 border-[0.5px] dark:border-neutral-700 focus:outline-none"
+          type="number" min="0" max="1" step="0.05" placeholder="1"
+          value={endPoint.endT ?? ""}
+          on:input={setEndT}
+          on:blur={() => dispatch("commit")}
+          title="Heading interpolation finishes at this path fraction"
+          disabled={locked}
+        />
+        {#if timingActive}
+          <button type="button" on:click={clearTiming} title="Clear timing" class="hover:text-red-500" disabled={locked}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={2.5} class="size-3 stroke-current">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        {/if}
+      {:else if !timingActive}
+        <span class="opacity-70">interp. timing</span>
       {/if}
     </div>
   </div>
@@ -316,6 +454,32 @@ With tangential heading, the heading follows the direction of the line."
             constPickerOpen = false;
           }}
           onClose={() => (constPickerOpen = false)}
+        />
+      {/if}
+      <button
+        type="button"
+        bind:this={constProtBtn}
+        title="Set with the protractor dial"
+        on:click={() => (protractorFor = protractorFor === "const" ? null : "const")}
+        class="p-0.5 rounded text-neutral-500 dark:text-neutral-400 hover:text-sky-600 dark:hover:text-sky-400"
+        class:text-sky-600={protractorFor === "const"}
+        disabled={locked}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width={1.8} stroke="currentColor" class="size-3.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18M12 21a9 9 0 0 1 0-18m0 18V3m0 9 6.5-4" />
+        </svg>
+      </button>
+      {#if protractorFor === "const"}
+        <HeadingProtractor
+          value={endPoint.degrees ?? 0}
+          anchor={constProtBtn}
+          previewPoint={pointXY}
+          onInput={(d) => {
+            endPoint.degrees = d;
+            dispatch("change");
+          }}
+          onCommit={() => dispatch("commit")}
+          onClose={() => (protractorFor = null)}
         />
       {/if}
     {/if}

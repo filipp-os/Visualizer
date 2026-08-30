@@ -24,6 +24,13 @@ export const currentFilePath = writable<string | null>(null);
 export const isUnsaved = writable(false);
 export const snapToGrid = writable(true);
 
+// While a heading protractor popup is open, this holds the field point (in
+// inches) and the live heading (degrees) it is previewing, so the main robot
+// on the field jumps there. Cleared when the popup closes -> robot snaps back.
+export const headingPreview = writable<
+  { x: number; y: number; heading: number } | null
+>(null);
+
 // Timeline clipboard: a copied path bubble or a copied path group.
 // Session-only (not persisted). Shape:
 //   { kind: "path", line: Line }

@@ -27,6 +27,31 @@
     }
   }
 
+  // --- Drivetrain-centre picker (drag on the robot image preview) ---
+  let centerBox: HTMLDivElement;
+  function centerFromEvent(e: MouseEvent) {
+    if (!centerBox) return;
+    const r = centerBox.getBoundingClientRect();
+    const fx = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const fy = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    settings.robotCenterOffsetX = +((fx - 0.5) * (settings.rWidth || 18)).toFixed(2);
+    settings.robotCenterOffsetY = +((fy - 0.5) * (settings.rHeight || 18)).toFixed(2);
+    settings = { ...settings };
+  }
+  function centerDown(e: MouseEvent) {
+    e.preventDefault();
+    centerFromEvent(e);
+    const move = (ev: MouseEvent) => centerFromEvent(ev);
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+  $: centerPctX = 50 + ((settings?.robotCenterOffsetX || 0) / (settings?.rWidth || 18)) * 100;
+  $: centerPctY = 50 + ((settings?.robotCenterOffsetY || 0) / (settings?.rHeight || 18)) * 100;
+
   async function handleReset() {
     if (
       confirm(
@@ -461,6 +486,84 @@
                   >
                     <p>Supported: PNG, JPG, GIF</p>
                     <p>Recommended: &lt; 1MB, transparent background</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Drivetrain Center Offset -->
+              <div>
+                <div
+                  class="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
+                >
+                  Drivetrain Center
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">
+                    Offset (in) from the image center to the real drivetrain
+                    center. Reflected on the field and in playback.
+                  </div>
+                </div>
+                <div
+                  class="flex items-start gap-3 p-3 border border-neutral-300 dark:border-neutral-700 rounded-md bg-neutral-50 dark:bg-neutral-800/50"
+                >
+                  <div
+                    bind:this={centerBox}
+                    role="presentation"
+                    on:mousedown={centerDown}
+                    class="relative shrink-0 border border-neutral-300 dark:border-neutral-600 rounded bg-white dark:bg-neutral-900 cursor-crosshair overflow-hidden"
+                    style="width: 110px; height: {Math.round(
+                      (110 * (settings.rHeight || 18)) / (settings.rWidth || 18),
+                    )}px;"
+                    title="Drag to place the drivetrain center"
+                  >
+                    <img
+                      src={settings.robotImage || "/robot.png"}
+                      alt=""
+                      class="absolute inset-0 w-full h-full object-fill opacity-80 pointer-events-none"
+                    />
+                    <div
+                      class="absolute w-full border-t border-dashed border-sky-400/60 pointer-events-none"
+                      style="top: {centerPctY}%"
+                    ></div>
+                    <div
+                      class="absolute h-full border-l border-dashed border-sky-400/60 pointer-events-none"
+                      style="left: {centerPctX}%"
+                    ></div>
+                    <div
+                      class="absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500 ring-2 ring-white dark:ring-neutral-900 pointer-events-none"
+                      style="left: {centerPctX}%; top: {centerPctY}%"
+                    ></div>
+                  </div>
+                  <div class="flex flex-col gap-2 flex-1">
+                    <label class="text-xs flex items-center gap-2">
+                      <span class="w-10 text-neutral-500">X (in)</span>
+                      <input
+                        type="number"
+                        step="0.25"
+                        bind:value={settings.robotCenterOffsetX}
+                        on:input={() => (settings = { ...settings })}
+                        class="flex-1 px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 focus:outline-none"
+                      />
+                    </label>
+                    <label class="text-xs flex items-center gap-2">
+                      <span class="w-10 text-neutral-500">Y (in)</span>
+                      <input
+                        type="number"
+                        step="0.25"
+                        bind:value={settings.robotCenterOffsetY}
+                        on:input={() => (settings = { ...settings })}
+                        class="flex-1 px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 focus:outline-none"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      on:click={() => {
+                        settings.robotCenterOffsetX = 0;
+                        settings.robotCenterOffsetY = 0;
+                        settings = { ...settings };
+                      }}
+                      class="self-start text-xs px-2 py-1 rounded bg-neutral-200 dark:bg-neutral-700"
+                    >
+                      Reset to center
+                    </button>
                   </div>
                 </div>
               </div>

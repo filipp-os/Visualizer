@@ -20,6 +20,7 @@
     dualPathMode,
     secondFilePath,
     activePaths,
+    headingPreview,
   } from "./stores";
   import Two from "two.js";
   import type { Path } from "two.js/src/path";
@@ -471,6 +472,31 @@
     .scaleLinear()
     .domain([0, FIELD_SIZE])
     .range([height || FIELD_SIZE, 0]);
+
+  // Drivetrain-center offset (inches, robot-local) -> a CSS translate applied
+  // outside the rotation so the path point lands on the drivetrain, not the
+  // image centre.
+  $: centerOffPx = {
+    x: x(settings.robotCenterOffsetX || 0),
+    y: x(settings.robotCenterOffsetY || 0),
+  };
+  function robotImgTransform(headingDeg: number): string {
+    const r = (headingDeg * Math.PI) / 180;
+    const rx = centerOffPx.x * Math.cos(r) - centerOffPx.y * Math.sin(r);
+    const ry = centerOffPx.x * Math.sin(r) + centerOffPx.y * Math.cos(r);
+    return `translate(-50%, -50%) translate(${-rx}px, ${-ry}px) rotate(${headingDeg}deg)`;
+  }
+
+  // When a heading protractor popup is open it pins the main robot to the
+  // point it is editing; clearing the store snaps the robot back.
+  $: previewActive = $activePaths.length === 0 && $headingPreview != null;
+  $: displayRobotXY = previewActive
+    ? { x: x($headingPreview!.x), y: y($headingPreview!.y) }
+    : robotXY;
+  $: displayRobotHeading = previewActive
+    ? -$headingPreview!.heading
+    : robotHeading;
+
   $: {
     // Calculate robot state using the Timeline
     if (timePrediction && timePrediction.timeline && lines.length > 0) {
@@ -1725,10 +1751,14 @@
         ctx.globalAlpha = opacity;
         ctx.translate(xy.x * scale, xy.y * scale);
         ctx.rotate((headingDeg * Math.PI) / 180);
+        // Shift the image so the drivetrain centre (offset from the image
+        // centre) sits on the path point.
+        const offX = x(settings.robotCenterOffsetX || 0) * scale;
+        const offY = x(settings.robotCenterOffsetY || 0) * scale;
         ctx.drawImage(
           robotImage,
-          (-robotPixelWidth * scale) / 2,
-          (-robotPixelHeight * scale) / 2,
+          (-robotPixelWidth * scale) / 2 - offX,
+          (-robotPixelHeight * scale) / 2 - offY,
           robotPixelWidth * scale,
           robotPixelHeight * scale,
         );
@@ -3313,9 +3343,9 @@
         <img
           src={settings.robotImage || "/robot.png"}
           alt="Robot"
-          style={`position: absolute; top: ${robotXY.y}px;
-left: ${robotXY.x}px; transform: translate(-50%, -50%) rotate(${robotHeading}deg); z-index: 20; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px;user-select: none; -webkit-user-select: none; -moz-user-select: none;-ms-user-select: none;
-pointer-events: none;`}
+          style={`position: absolute; top: ${displayRobotXY.y}px;
+left: ${displayRobotXY.x}px; transform: ${robotImgTransform(displayRobotHeading)}; z-index: 20; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px;user-select: none; -webkit-user-select: none; -moz-user-select: none;-ms-user-select: none;
+pointer-events: none; ${previewActive ? "outline: 2px dashed rgba(56,189,248,0.9); outline-offset: 2px;" : ""}`}
           draggable="false"
           on:error={(e) => {
             console.error("Failed to load robot image:", settings.robotImage);
@@ -3327,7 +3357,7 @@ pointer-events: none;`}
         <!-- Heading arrow for main robot -->
         {#if settings.showHeadingArrow}
           <svg
-            style={`position: absolute; top: ${robotXY.y}px; left: ${robotXY.x}px; z-index: 21; pointer-events: none; overflow: visible;`}
+            style={`position: absolute; top: ${displayRobotXY.y}px; left: ${displayRobotXY.x}px; z-index: 21; pointer-events: none; overflow: visible;`}
             width="1"
             height="1"
           >
@@ -3349,8 +3379,8 @@ pointer-events: none;`}
             <line
               x1="0"
               y1="0"
-              x2="{(settings.headingArrowLength || 50) * Math.cos(-robotHeading * Math.PI / 180)}"
-              y2="{(settings.headingArrowLength || 50) * -Math.sin(-robotHeading * Math.PI / 180)}"
+              x2="{(settings.headingArrowLength || 50) * Math.cos(-displayRobotHeading * Math.PI / 180)}"
+              y2="{(settings.headingArrowLength || 50) * -Math.sin(-displayRobotHeading * Math.PI / 180)}"
               stroke={settings.headingArrowColor || "#ffffff"}
               stroke-width={settings.headingArrowThickness || 3}
               marker-end="url(#arrowhead-main)"
@@ -3364,7 +3394,7 @@ pointer-events: none;`}
           src={settings.robotImage || "/robot.png"}
           alt="Robot 2"
           style={`position: absolute; top: ${secondRobotXY.y}px;
-left: ${secondRobotXY.x}px; transform: translate(-50%, -50%) rotate(${secondRobotHeading}deg); z-index: 19; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px;user-select: none; -webkit-user-select: none; -moz-user-select: none;-ms-user-select: none;
+left: ${secondRobotXY.x}px; transform: ${robotImgTransform(secondRobotHeading)}; z-index: 19; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px;user-select: none; -webkit-user-select: none; -moz-user-select: none;-ms-user-select: none;
 pointer-events: none; opacity: 0.8;`}
           draggable="false"
           on:error={(e) => {
@@ -3415,7 +3445,7 @@ pointer-events: none; opacity: 0.8;`}
             src={settings.robotImage || "/robot.png"}
             alt="Robot {idx + 1}"
             style={`position: absolute; top: ${robotState.xy.y}px;
-left: ${robotState.xy.x}px; transform: translate(-50%, -50%) rotate(${robotState.heading}deg); z-index: ${20 - idx}; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px;user-select: none; -webkit-user-select: none; -moz-user-select: none;-ms-user-select: none;
+left: ${robotState.xy.x}px; transform: ${robotImgTransform(robotState.heading)}; z-index: ${20 - idx}; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px;user-select: none; -webkit-user-select: none; -moz-user-select: none;-ms-user-select: none;
 pointer-events: none; opacity: ${1.0 - idx * 0.15};`}
             draggable="false"
             on:error={(e) => {

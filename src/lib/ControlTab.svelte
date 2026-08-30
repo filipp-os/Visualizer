@@ -313,23 +313,49 @@
   // Compute timeline markers for the UI (start of each travel segment)
   $: timePrediction = calculatePathTime(startPoint, lines, settings, sequence);
   $: markers = (() => {
-    const _markers: { percent: number; color: string; name: string }[] = [];
+    const _markers: {
+      percent: number;
+      color: string;
+      name: string;
+      shape?: "dot" | "tick";
+    }[] = [];
     if (
       !timePrediction ||
       !timePrediction.timeline ||
       timePrediction.totalTime <= 0
     )
       return _markers;
+    const total = timePrediction.totalTime;
 
     timePrediction.timeline.forEach((ev) => {
       if ((ev as any).type === "travel") {
+        const start = (ev as any).startTime as number;
         const end = (ev as any).endTime as number;
-        const pct = (end / timePrediction.totalTime) * 100;
+        const pct = (end / total) * 100;
         const lineIndex = (ev as any).lineIndex as number;
         const line = lines[lineIndex];
         const color = line?.color || "#ffffff";
         const name = line?.name || `Path ${lineIndex + 1}`;
-        _markers.push({ percent: pct, color, name });
+        _markers.push({ percent: pct, color, name, shape: "dot" });
+
+        // Linear-interpolation start/end timing → thin ticks on the playbar.
+        const ep: any = line?.endPoint;
+        if (ep && ep.heading === "linear") {
+          const span = end - start;
+          const addTick = (t: number, label: string) => {
+            const p = ((start + t * span) / total) * 100;
+            _markers.push({
+              percent: Math.max(0, Math.min(100, p)),
+              color: "#a855f7",
+              name: `${name}: heading ${label} (t=${t})`,
+              shape: "tick",
+            });
+          };
+          if (Number.isFinite(ep.startT) && ep.startT > 0)
+            addTick(ep.startT, "interp. start");
+          if (Number.isFinite(ep.endT) && ep.endT < 1)
+            addTick(ep.endT, "interp. end");
+        }
       }
     });
 
