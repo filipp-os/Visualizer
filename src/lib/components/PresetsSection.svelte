@@ -106,14 +106,13 @@
     </div>
     <div
       class="grid gap-2 mb-3"
-      style="grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));"
+      style="grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));"
     >
       {#each positions as pos (pos.id)}
         <div
-          class="flex flex-col gap-1 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 p-2"
+          class="flex flex-col gap-1.5 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 px-2 pb-2 pt-1"
           role="button"
           tabindex="0"
-          title="Double-click to append as a path • drag the grip onto the timeline"
           on:dblclick={(e) => {
             if (!(e.target instanceof HTMLElement) || !e.target.closest("input,button,textarea"))
               onActivatePosition(pos.id);
@@ -125,23 +124,26 @@
             }
           }}
         >
+          <!-- Drag / double-click strip: no inputs here, so there's always a
+               safe spot to double-click. -->
+          <div
+            draggable="true"
+            on:dragstart={(e) => startPresetDrag("position", pos.id, pos.name, e)}
+            on:dragend={onPresetDragEnd}
+            title="Drag onto the timeline or a path • double-click to add as a path"
+            role="button"
+            tabindex="0"
+            aria-label="Drag {pos.name} into the timeline"
+            class="flex items-center gap-1 h-4 cursor-grab active:cursor-grabbing select-none text-sky-500/70 hover:text-sky-600 dark:text-sky-400/70"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5 shrink-0">
+              <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+              <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+              <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+            </svg>
+            <span class="text-[9px] font-semibold uppercase tracking-wider">drag · 2×-click → path</span>
+          </div>
           <div class="flex items-center gap-1">
-            <span
-              draggable="true"
-              on:dragstart={(e) => startPresetDrag("position", pos.id, pos.name, e)}
-              on:dragend={onPresetDragEnd}
-              title="Drag onto a timeline gap to add as a path"
-              role="button"
-              tabindex="0"
-              aria-label="Drag {pos.name} into the timeline"
-              class="cursor-grab active:cursor-grabbing text-sky-400 hover:text-sky-600 dark:hover:text-sky-300 shrink-0 select-none"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
-                <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
-                <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
-                <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
-              </svg>
-            </span>
             <input
               bind:value={pos.name}
               placeholder="Name"
@@ -244,14 +246,13 @@
     </div>
     <div
       class="grid gap-2"
-      style="grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));"
+      style="grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));"
     >
       {#each headings as h (h.id)}
         <div
-          class="flex flex-col gap-1 rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 p-2"
+          class="flex flex-col gap-1.5 rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 px-2 pb-2 pt-1"
           role="button"
           tabindex="0"
-          title="Double-click to apply to the last path • drag the grip onto a path"
           on:dblclick={(e) => {
             if (!(e.target instanceof HTMLElement) || !e.target.closest("input,button,textarea"))
               onActivateHeading(h.id);
@@ -263,23 +264,24 @@
             }
           }}
         >
+          <div
+            draggable="true"
+            on:dragstart={(e) => startPresetDrag("heading", h.id, h.name, e)}
+            on:dragend={onPresetDragEnd}
+            title="Drag onto a path to set its heading • double-click to apply to the last path"
+            role="button"
+            tabindex="0"
+            aria-label="Drag {h.name} onto a path"
+            class="flex items-center gap-1 h-4 cursor-grab active:cursor-grabbing select-none text-purple-500/70 hover:text-purple-600 dark:text-purple-400/70"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5 shrink-0">
+              <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+              <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+              <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+            </svg>
+            <span class="text-[9px] font-semibold uppercase tracking-wider">drag → path · 2×-click → last</span>
+          </div>
           <div class="flex items-center gap-1">
-            <span
-              draggable="true"
-              on:dragstart={(e) => startPresetDrag("heading", h.id, h.name, e)}
-              on:dragend={onPresetDragEnd}
-              title="Drag onto a path to set its heading"
-              role="button"
-              tabindex="0"
-              aria-label="Drag {h.name} onto a path"
-              class="cursor-grab active:cursor-grabbing text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 shrink-0 select-none"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
-                <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
-                <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
-                <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
-              </svg>
-            </span>
             <input
               bind:value={h.name}
               placeholder="Name"

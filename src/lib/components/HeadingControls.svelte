@@ -213,7 +213,10 @@ With tangential heading, the heading follows the direction of the line."
           {/if}
         {/if}
       {/if}
-      <label class="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 ml-1">
+      <label
+        class="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 ml-1"
+        title="By default the start heading follows the previous path's end heading. Tick to set it yourself."
+      >
         <input
           type="checkbox"
           checked={endPoint.customStartHeading ?? false}
@@ -228,7 +231,7 @@ With tangential heading, the heading follows the direction of the line."
           }}
           disabled={locked}
         />
-        Custom
+        Override
       </label>
     </div>
     <div class="flex items-center gap-1">

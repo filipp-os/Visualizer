@@ -13,7 +13,7 @@
   import _ from "lodash";
   import { onMount } from "svelte";
   import hotkeys from "hotkeys-js";
-  import { getRandomColor } from "../utils";
+  import { getRandomColor, computePreviousEndHeading } from "../utils";
   import { pathClipboard } from "../stores";
   import ObstaclesSection from "./components/ObstaclesSection.svelte";
   import RobotPositionDisplay from "./components/RobotPositionDisplay.svelte";
@@ -400,6 +400,22 @@
     return i as any;
   }
 
+  // New paths default to LINEAR heading interpolation, holding whatever
+  // heading the robot arrives with (start = end = previous path's end
+  // heading) so adding a path doesn't spin the robot.
+  function newLinearEndPoint(x: number, y: number, atIndex: number): any {
+    const h = computePreviousEndHeading(lines, atIndex, startPoint);
+    const deg = Number.isFinite(h) ? h : 0;
+    return {
+      x,
+      y,
+      heading: "linear",
+      startDeg: deg,
+      endDeg: deg,
+      customStartHeading: false,
+    };
+  }
+
   function insertLineAfter(seqIndex: number) {
     const seqItem = sequence[seqIndex];
     if (!seqItem || seqItem.kind !== "path") return;
@@ -416,7 +432,7 @@
     }
 
     // If there is no next path in sequence, fall back to addLine behavior (append new randomized point)
-    let newPoint: Point | null = null;
+    let newPoint: any = null;
     if (nextPathSeqIndex !== -1) {
       const nextLineId = (sequence[nextPathSeqIndex] as any).lineId;
       const nextLine = lines.find((l) => l.id === nextLineId);
@@ -430,31 +446,24 @@
         const b = nextLine.endPoint;
         const midX = (Number(a.x) + Number(b.x)) / 2;
         const midY = (Number(a.y) + Number(b.y)) / 2;
-        newPoint = {
-          x: midX,
-          y: midY,
-          heading: "tangential",
-          reverse: false,
-        };
+        newPoint = newLinearEndPoint(midX, midY, lineIndex + 1);
       }
     }
 
     if (!newPoint) {
       // fallback: random nearby point from current end
       if (currentLine && currentLine.endPoint) {
-        newPoint = {
-          x: (currentLine.endPoint.x ?? 72) + _.random(-12, 12),
-          y: (currentLine.endPoint.y ?? 72) + _.random(-12, 12),
-          heading: "tangential",
-          reverse: false,
-        };
+        newPoint = newLinearEndPoint(
+          (currentLine.endPoint.x ?? 72) + _.random(-12, 12),
+          (currentLine.endPoint.y ?? 72) + _.random(-12, 12),
+          lineIndex + 1,
+        );
       } else {
-        newPoint = {
-          x: _.random(0, 141.5),
-          y: _.random(0, 141.5),
-          heading: "tangential",
-          reverse: false,
-        };
+        newPoint = newLinearEndPoint(
+          _.random(0, 141.5),
+          _.random(0, 141.5),
+          lineIndex + 1,
+        );
       }
     }
 
@@ -519,12 +528,7 @@
 
     const newLine: Line = {
       id: makeId(),
-      endPoint: {
-        x: midX,
-        y: midY,
-        heading: "tangential",
-        reverse: false,
-      },
+      endPoint: newLinearEndPoint(midX, midY, lineIndex + 1),
       controlPoints: [],
       color: getRandomColor(),
       name: `Path ${lines.length + 1}`,
@@ -572,12 +576,11 @@
     const newLine: Line = {
       id: makeId(),
       name: `Path ${lines.length + 1}`,
-      endPoint: {
-        x: _.random(0, 141.5),
-        y: _.random(0, 141.5),
-        heading: "tangential",
-        reverse: false,
-      },
+      endPoint: newLinearEndPoint(
+        _.random(0, 141.5),
+        _.random(0, 141.5),
+        lines.length,
+      ),
       controlPoints: [],
       color: getRandomColor(),
       waitBeforeMs: 0,
@@ -597,12 +600,11 @@
     const newLine: Line = {
       id: makeId(),
       name: `Curve ${lines.length + 1}`,
-      endPoint: {
-        x: _.random(0, 141.5),
-        y: _.random(0, 141.5),
-        heading: "tangential",
-        reverse: false,
-      },
+      endPoint: newLinearEndPoint(
+        _.random(0, 141.5),
+        _.random(0, 141.5),
+        lines.length,
+      ),
       controlPoints: [],
       color: getRandomColor(),
       waitBeforeMs: 0,
@@ -699,12 +701,7 @@
     const newLine: Line = {
       id: makeId(),
       name: `Path ${lines.length + 1}`,
-      endPoint: {
-        x: _.random(0, 141.5),
-        y: _.random(0, 141.5),
-        heading: "tangential",
-        reverse: false,
-      },
+      endPoint: newLinearEndPoint(_.random(0, 141.5), _.random(0, 141.5), 0),
       controlPoints: [],
       color: getRandomColor(),
       waitBeforeMs: 0,
@@ -740,12 +737,11 @@
     const newLine: Line = {
       id: makeId(),
       name: `Path ${lines.length + 1}`,
-      endPoint: {
-        x: _.random(36, 108),
-        y: _.random(36, 108),
-        heading: "tangential",
-        reverse: false,
-      },
+      endPoint: newLinearEndPoint(
+        _.random(36, 108),
+        _.random(36, 108),
+        lines.length,
+      ),
       controlPoints: [],
       color: getRandomColor(),
       waitBeforeMs: 0,
@@ -1048,6 +1044,32 @@
       ep.heading = "constant";
       ep.degrees = h.degrees;
       ep.headingLink = link;
+    }
+    lines = [...lines];
+    recordChange?.();
+  }
+
+  // Drop a saved position onto an existing path bubble: move that path's end
+  // point onto the position and link it (mirrors the position picker).
+  function applyPositionToLine(lineId: string, posId: string) {
+    const pos = (savedPositions as any[]).find((p) => p.id === posId);
+    if (!pos || !lineId) return;
+    const line = lines.find((l) => l.id === lineId);
+    if (!line || line.locked) return;
+    const ep = line.endPoint as any;
+    const link = makePresetLink("position", pos);
+    ep.x = pos.x;
+    ep.y = pos.y;
+    ep.positionLink = link;
+    // If the position carries a heading, apply it to the matching heading field.
+    if (pos.heading !== undefined && pos.heading !== null) {
+      if (ep.heading === "linear") {
+        ep.endDeg = pos.heading;
+        ep.endHeadingLink = { ...link };
+      } else if (ep.heading === "constant") {
+        ep.degrees = pos.heading;
+        ep.headingLink = { ...link };
+      }
     }
     lines = [...lines];
     recordChange?.();
@@ -1598,7 +1620,9 @@
     <!-- Unified sequence render: draggable bubbles for paths and waits.
          Gap slots (fixed height, always present) sit between bubbles and
          are the only valid drop targets. Runs of items sharing a
-         groupInstanceId render under a collapsible group header. -->
+         groupInstanceId render under a collapsible group header. This
+         wrapper has no `gap` so the bubbles sit close together. -->
+    <div class="w-full flex flex-col">
     {#each sequence as item, sIdx (seqKey(item))}
       {@const gid = gidOf(item)}
       {@const inst = gid ? groupInstById.get(gid) : null}
@@ -1608,7 +1632,7 @@
       {#if firstOfGroup && inst}
         {@const mCount = groupMemberIdxs(gid).length}
         <div
-          class="w-full h-4 relative z-10 shrink-0"
+          class="w-full h-3 relative z-10 shrink-0"
           role="presentation"
           on:dragover={(e) => handleGapDragOver(sIdx, e)}
           on:dragleave={() => handleGapDragLeave(sIdx)}
@@ -1693,7 +1717,7 @@
 
         {#if !inst.collapsed}
           <div
-            class="w-full h-4 relative z-10 shrink-0 pl-4"
+            class="w-full h-3 relative z-10 shrink-0 pl-4"
             role="presentation"
             on:dragover={(e) => handleGapDragOver(sIdx, e)}
             on:dragleave={() => handleGapDragLeave(sIdx)}
@@ -1712,7 +1736,7 @@
       {#if !hiddenMember}
         {#if !gid}
           <div
-            class="w-full h-4 relative z-10 shrink-0"
+            class="w-full h-3 relative z-10 shrink-0"
             role="presentation"
             on:dragover={(e) => handleGapDragOver(sIdx, e)}
             on:dragleave={() => handleGapDragLeave(sIdx)}
@@ -1727,7 +1751,7 @@
           </div>
         {:else if !firstOfGroup}
           <div
-            class="w-full h-4 relative z-10 shrink-0 pl-4"
+            class="w-full h-3 relative z-10 shrink-0 pl-4"
             role="presentation"
             on:dragover={(e) => handleGapDragOver(sIdx, e)}
             on:dragleave={() => handleGapDragLeave(sIdx)}
@@ -1784,6 +1808,11 @@
               onHeadingDrop={() => {
                 if (draggedPreset?.kind === "heading")
                   applyHeadingToLine(ln.id ?? "", draggedPreset.id);
+              }}
+              draggingPosition={draggedPreset?.kind === "position"}
+              onPositionDrop={() => {
+                if (draggedPreset?.kind === "position")
+                  applyPositionToLine(ln.id ?? "", draggedPreset.id);
               }}
               optimizeLine={optimizeLine}
               optimizing={optimizingLineIds?.[ln.id ?? ""] ?? false}
@@ -1844,7 +1873,7 @@
 
     <!-- Trailing gap slot: dropping here places the bubble at the very end -->
     <div
-      class="w-full h-4 relative z-10 shrink-0"
+      class="w-full h-3 relative z-10 shrink-0"
       role="presentation"
       on:dragover={(e) => handleGapDragOver(sequence.length, e)}
       on:dragleave={() => handleGapDragLeave(sequence.length)}
@@ -1856,6 +1885,7 @@
           ? 'bg-blue-400 dark:bg-blue-500'
           : 'bg-transparent'}"
       />
+    </div>
     </div>
 
     {#if ctxMenu}

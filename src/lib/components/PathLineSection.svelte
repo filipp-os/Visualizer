@@ -25,9 +25,21 @@
   // drop target that applies that heading to this path.
   export let draggingHeading: boolean = false;
   export let onHeadingDrop: () => void = () => {};
+  // True while a saved position is being dragged — the bubble becomes a drop
+  // target that links that position to this path's end point.
+  export let draggingPosition: boolean = false;
+  export let onPositionDrop: () => void = () => {};
 
   let headingDragOver = false;
+  let positionDragOver = false;
   $: if (!draggingHeading) headingDragOver = false;
+  $: if (!draggingPosition) positionDragOver = false;
+  $: dropActive = (draggingHeading || draggingPosition) && !line.locked;
+  $: dragOverRing = headingDragOver
+    ? "border-purple-400 dark:border-purple-500 ring-2 ring-purple-400/60"
+    : positionDragOver
+      ? "border-sky-400 dark:border-sky-500 ring-2 ring-sky-400/60"
+      : "border-neutral-200 dark:border-neutral-700";
   export let optimizeLine: (lineId: string, targetControlPointIndex?: number) => void;
   export let optimizing: boolean = false;
   export let chainOptions: Array<{ id: string; name: string; color: string }> = [];
@@ -65,32 +77,35 @@
 </script>
 
 <div
-  class="flex flex-col w-full justify-start items-start gap-0 rounded-2xl border bg-white dark:bg-neutral-800 shadow-sm overflow-hidden transition-shadow {headingDragOver
-    ? 'border-purple-400 dark:border-purple-500 ring-2 ring-purple-400/60'
-    : 'border-neutral-200 dark:border-neutral-700'}"
+  class="flex flex-col w-full justify-start items-start gap-0 rounded-2xl border bg-white dark:bg-neutral-800 shadow-sm overflow-hidden transition-shadow {dragOverRing}"
   style="--bubble-color: {line.color}"
   role="presentation"
   on:dragover={(e) => {
-    if (!draggingHeading || line.locked) return;
+    if (!dropActive) return;
     e.preventDefault();
-    headingDragOver = true;
+    if (draggingHeading) headingDragOver = true;
+    else if (draggingPosition) positionDragOver = true;
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   }}
   on:dragleave={(e) => {
     if (e.currentTarget instanceof HTMLElement && e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))
       return;
     headingDragOver = false;
+    positionDragOver = false;
   }}
   on:drop={(e) => {
-    if (!draggingHeading || line.locked) return;
+    if (!dropActive) return;
     e.preventDefault();
+    const wasHeading = headingDragOver;
+    const wasPosition = positionDragOver;
     headingDragOver = false;
-    onHeadingDrop();
+    positionDragOver = false;
+    if (wasHeading || draggingHeading) onHeadingDrop();
+    else if (wasPosition || draggingPosition) onPositionDrop();
   }}
 >
   <div
-    class="flex flex-row w-full items-center gap-3 flex-wrap px-2 py-1.5 rounded-full"
-    style="background: color-mix(in srgb, {line.color} 12%, transparent);"
+    class="flex flex-row w-full items-center gap-3 flex-wrap px-2 py-1"
   >
     <!-- Drag handle: grab anywhere on this to reorder the bubble -->
     <span

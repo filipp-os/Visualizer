@@ -53,6 +53,7 @@
     loadTrajectoryFromFile,
     loadRobotImage,
     updateRobotImageDisplay,
+    computePreviousEndHeading,
   } from "./utils";
   import {
     POINT_RADIUS,
@@ -2610,15 +2611,20 @@
       inchX = Math.max(0, Math.min(FIELD_SIZE, inchX));
       inchY = Math.max(0, Math.min(FIELD_SIZE, inchY));
 
-      // Create a new line with endPoint at the clicked position
+      // Create a new line with endPoint at the clicked position. New paths
+      // default to linear heading interpolation, holding the arrival heading.
+      const followH = computePreviousEndHeading(lines, lines.length, startPoint);
+      const followDeg = Number.isFinite(followH) ? followH : 0;
       const newLine: Line = {
         id: `line-${Math.random().toString(36).slice(2)}`,
         endPoint: {
           x: inchX,
           y: inchY,
-          heading: "tangential",
-          reverse: false,
-        },
+          heading: "linear",
+          startDeg: followDeg,
+          endDeg: followDeg,
+          customStartHeading: false,
+        } as Point,
         controlPoints: [],
         color: getRandomColor(),
         locked: false,
@@ -2969,6 +2975,8 @@
   }
 
   function addNewLine() {
+    const followH = computePreviousEndHeading(lines, lines.length, startPoint);
+    const followDeg = Number.isFinite(followH) ? followH : 0;
     lines = [
       ...lines,
       {
@@ -2976,8 +2984,10 @@
         endPoint: {
           x: _.random(36, 108),
           y: _.random(36, 108),
-          heading: "tangential",
-          reverse: true,
+          heading: "linear",
+          startDeg: followDeg,
+          endDeg: followDeg,
+          customStartHeading: false,
         } as Point,
         controlPoints: [],
         color: getRandomColor(),
