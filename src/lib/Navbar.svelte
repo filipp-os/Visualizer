@@ -121,7 +121,9 @@
     }
   }
 
-  function handleExport(format: "java" | "points" | "sequential") {
+  function handleExport(
+    format: "java" | "points" | "sequential" | "ivy-paths" | "ivy-opmode",
+  ) {
     exportMenuOpen = false;
     fileManagerOpen = false; // ensure file manager is closed before opening export dialog
     exportDialog.openWithFormat(format);
@@ -845,14 +847,27 @@
             class="absolute right-0 mt-2 w-48 bg-white dark:bg-neutral-800 rounded-md shadow-lg py-1 z-50 border border-neutral-200 dark:border-neutral-700"
           >
             <button
-              on:click={() => handleExport("java")}
-              class="block w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-neutral-200 transition-colors duration-250"
+              on:click={() => handleExport("ivy-paths")}
+              class="block w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors duration-250"
             >
-              Java Code
+              IVY — Paths class
+            </button>
+            <button
+              on:click={() => handleExport("ivy-opmode")}
+              class="block w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors duration-250"
+            >
+              IVY — Full OpMode
+            </button>
+            <div class="my-1 h-px bg-neutral-200 dark:bg-neutral-700"></div>
+            <button
+              on:click={() => handleExport("java")}
+              class="block w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors duration-250"
+            >
+              Java Code (legacy)
             </button>
             <button
               on:click={() => handleExport("points")}
-              class="block w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-neutral-200 transition-colors duration-250"
+              class="block w-full text-left px-4 py-2 text-sm text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors duration-250"
             >
               Points Array
             </button>

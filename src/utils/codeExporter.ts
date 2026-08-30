@@ -20,6 +20,20 @@ async function loadJavaPlugin() {
   return null;
 }
 
+/** Format a Java source string with prettier-java, falling back to the raw string. */
+export async function formatJava(src: string): Promise<string> {
+  try {
+    const javaPlugin = await loadJavaPlugin();
+    return await prettier.format(src, {
+      parser: "java",
+      plugins: javaPlugin ? [javaPlugin] : [],
+    });
+  } catch (error) {
+    console.error("Java format error:", error);
+    return src;
+  }
+}
+
 /**
  * Generate Java code from path data
  */

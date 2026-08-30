@@ -12,6 +12,10 @@
     generatePointsArray,
     generateSequentialCommandCode,
   } from "../../utils/codeExporter";
+  import {
+    generateIvyPathsClass,
+    generateIvyOpMode,
+  } from "../../utils/ivyExporter";
 
   export let isOpen = false;
   export let startPoint: Point;
@@ -19,12 +23,79 @@
   export let sequence: SequenceItem[];
   export let pathChains: PathChain[] = [];
 
+  type ExportFormat =
+    | "java"
+    | "points"
+    | "sequential"
+    | "ivy-paths"
+    | "ivy-opmode";
+
   let exportMode: "full" | "class" | "coordinates" = "class";
-  let exportFormat: "java" | "points" | "sequential" = "java";
+  let exportFormat: ExportFormat = "java";
   let sequentialClassName = "AutoPath";
   let exportedCode = "";
   let currentLanguage: typeof java | typeof plaintext = java;
   let copied = false;
+
+  // --- IVY export options ---
+  let ivyClassName = "Auto";
+  let ivyPackage = "";
+  let ivyAllianceMirror = false; // Style A: runtime isRed ? .mirror()
+  let ivyMirrorPoses = false; // Style B: bake mirrored coordinates
+
+  function fileBaseName(): string {
+    const fn = $currentFilePath?.split(/[\\/]/).pop();
+    if (!fn) return "Auto";
+    const base = fn.replace(/\.pp$/, "").replace(/[^a-zA-Z0-9]/g, "");
+    return base || "Auto";
+  }
+
+  async function regenerateIvy() {
+    if (exportFormat === "ivy-paths") {
+      exportedCode = await generateIvyPathsClass(
+        startPoint,
+        lines,
+        sequence,
+        pathChains,
+        {
+          className: ivyClassName,
+          packageName: ivyPackage || undefined,
+          allianceMirror: ivyAllianceMirror,
+        },
+      );
+    } else if (exportFormat === "ivy-opmode") {
+      exportedCode = await generateIvyOpMode(
+        startPoint,
+        lines,
+        sequence,
+        pathChains,
+        {
+          className: ivyClassName,
+          packageName: ivyPackage || undefined,
+          mirrorPoses: ivyMirrorPoses,
+        },
+      );
+    }
+  }
+
+  function downloadCode() {
+    let name = "export.txt";
+    if (exportFormat === "ivy-paths")
+      name = `${(ivyClassName || "Auto").replace(/[^a-zA-Z0-9]/g, "") || "Auto"}Paths.java`;
+    else if (exportFormat === "ivy-opmode")
+      name = `${(ivyClassName || "Auto").replace(/[^a-zA-Z0-9]/g, "") || "Auto"}.java`;
+    else if (exportFormat === "java") name = "PathExport.java";
+    else if (exportFormat === "sequential")
+      name = `${sequentialClassName || "AutoPath"}.java`;
+    else if (exportFormat === "points") name = "points.txt";
+    const blob = new Blob([exportedCode || ""], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 
   // Update sequential class name when file changes
   $: if ($currentFilePath) {
@@ -42,12 +113,22 @@
     }
   }
 
-  export async function openWithFormat(
-    format: "java" | "points" | "sequential",
-  ) {
+  export async function openWithFormat(format: ExportFormat) {
     exportFormat = format;
 
     try {
+      if (format === "ivy-paths" || format === "ivy-opmode") {
+        ivyClassName = fileBaseName();
+        ivyPackage =
+          format === "ivy-paths"
+            ? "org.firstinspires.ftc.teamcode.pedroPathing"
+            : "org.firstinspires.ftc.teamcode.opmode.autos";
+        currentLanguage = java;
+        exportedCode = "// generating…";
+        isOpen = true;
+        await regenerateIvy();
+        return;
+      }
       if (format === "java") {
         exportedCode = await generateJavaCode(
           startPoint,
@@ -141,9 +222,61 @@
             Here is the points array for this path:
           {:else if exportFormat === "sequential"}
             Here is the Sequential Command code for this path:
+          {:else if exportFormat === "ivy-paths"}
+            IVY <span class="font-medium">Paths</span> command class — one
+            <code>CommandBuilder</code> per path chain:
+          {:else if exportFormat === "ivy-opmode"}
+            Self-contained IVY OpMode — inlined poses + path commands +
+            <code>Groups.sequential(...)</code>:
           {/if}
         </p>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 flex-wrap justify-end">
+          {#if exportFormat === "ivy-paths" || exportFormat === "ivy-opmode"}
+            <label
+              class="text-sm font-light text-neutral-700 dark:text-neutral-400"
+              >Class:</label
+            >
+            <input
+              type="text"
+              bind:value={ivyClassName}
+              on:input={regenerateIvy}
+              class="px-2 py-1 text-sm rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500 w-28"
+              placeholder="Auto"
+            />
+            <input
+              type="text"
+              bind:value={ivyPackage}
+              on:input={regenerateIvy}
+              class="px-2 py-1 text-xs rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
+              placeholder="package name"
+              title="Java package for the generated file"
+            />
+            {#if exportFormat === "ivy-paths"}
+              <label
+                class="text-xs font-light text-neutral-700 dark:text-neutral-400 flex items-center gap-1"
+                title="Adds `activeX = isRed ? X.mirror() : X` so the class mirrors for the RED alliance at runtime"
+              >
+                <input
+                  type="checkbox"
+                  bind:checked={ivyAllianceMirror}
+                  on:change={regenerateIvy}
+                />
+                Alliance-mirror code
+              </label>
+            {:else}
+              <label
+                class="text-xs font-light text-neutral-700 dark:text-neutral-400 flex items-center gap-1"
+                title="Bakes mirrored coordinates (x → 141.5 − x, heading → 180° − heading) into the pose literals"
+              >
+                <input
+                  type="checkbox"
+                  bind:checked={ivyMirrorPoses}
+                  on:change={regenerateIvy}
+                />
+                Mirror poses
+              </label>
+            {/if}
+          {/if}
           {#if exportFormat === "java"}
             <label
               for="export-mode"
@@ -205,6 +338,26 @@
           code={exportedCode}
           class="w-full"
         />
+        <button
+          title="Download as a file"
+          on:click={downloadCode}
+          class="absolute bottom-2 right-14 opacity-45 hover:opacity-100 transition-all duration-200 bg-neutral-800 dark:bg-neutral-200 text-white dark:text-neutral-800 p-2 rounded"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="1.5"
+            stroke="currentColor"
+            class="size-5"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"
+            />
+          </svg>
+        </button>
         <button
           title={copied ? "Copied" : "Copy code to clipboard"}
           on:click={async () => {
