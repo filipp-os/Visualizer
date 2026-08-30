@@ -4,6 +4,10 @@ export interface BasePoint {
   x: number;
   y: number;
   locked?: boolean;
+  // Set when this point's x/y were filled in from a SavedPosition via the
+  // picker; drives the compact "linked" display (name + coords, no raw
+  // inputs) until the user removes the link.
+  positionLink?: PresetLink;
 }
 
 export type Point = BasePoint &
@@ -12,12 +16,16 @@ export type Point = BasePoint &
         heading: "linear";
         startDeg: number;
         endDeg: number;
+        customStartHeading?: boolean; // if false/unset, startDeg auto-follows the previous path's end heading
+        startHeadingLink?: PresetLink; // set when startDeg came from a saved heading/position
+        endHeadingLink?: PresetLink; // set when endDeg came from a saved heading/position
         degrees?: never;
         reverse?: never;
       }
     | {
         heading: "constant";
         degrees: number;
+        headingLink?: PresetLink; // set when degrees came from a saved heading/position
         startDeg?: never;
         endDeg?: never;
         reverse?: never;
@@ -144,4 +152,37 @@ export interface FileInfo {
   size: number;
   modified: Date;
   error?: string;
+}
+
+/**
+ * Tracks which saved preset (position or heading) filled in a field, so the
+ * UI can show a compact "linked" view (name + value) instead of raw inputs
+ * until the user explicitly removes the link.
+ */
+export interface PresetLink {
+  sourceType: "position" | "heading";
+  sourceId: string;
+  sourceName: string;
+}
+
+/**
+ * A named (x, y) position the user saves for quick reuse across paths.
+ * The optional `heading` lets a position also auto-set the path's heading
+ * (endDeg for linear, degrees for constant) when selected.
+ */
+export interface SavedPosition {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  heading?: number;
+}
+
+/**
+ * A named heading (in degrees) the user saves for quick reuse across paths.
+ */
+export interface SavedHeading {
+  id: string;
+  name: string;
+  degrees: number;
 }

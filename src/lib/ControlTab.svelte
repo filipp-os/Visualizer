@@ -7,6 +7,8 @@
     Shape,
     SequenceItem,
     PathChain,
+    SavedPosition,
+    SavedHeading,
   } from "../types";
   import _ from "lodash";
   import { getRandomColor } from "../utils";
@@ -16,6 +18,7 @@
   import PathLineSection from "./components/PathLineSection.svelte";
   import PlaybackControls from "./components/PlaybackControls.svelte";
   import WaitRow from "./components/WaitRow.svelte";
+  import PresetsSection from "./components/PresetsSection.svelte";
   import { calculatePathTime } from "../utils";
 
   export let percent: number;
@@ -26,6 +29,8 @@
   export let lines: Line[];
   export let sequence: SequenceItem[];
   export let pathChains: PathChain[] = [];
+  export let savedPositions: SavedPosition[] = [];
+  export let savedHeadings: SavedHeading[] = [];
   export let robotWidth: number = 16;
   export let robotHeight: number = 16;
   export let robotXY: BasePoint;
@@ -554,6 +559,32 @@
     recordChange();
   }
 
+  function addCurve() {
+    const newLine: Line = {
+      id: makeId(),
+      name: `Curve ${lines.length + 1}`,
+      endPoint: {
+        x: _.random(0, 141.5),
+        y: _.random(0, 141.5),
+        heading: "tangential",
+        reverse: false,
+      },
+      controlPoints: [],
+      color: getRandomColor(),
+      waitBeforeMs: 0,
+      waitAfterMs: 0,
+      waitBeforeName: "",
+      waitAfterName: "",
+    };
+    lines = [...lines, newLine];
+    sequence = [...sequence, { kind: "path", lineId: newLine.id! }];
+    addControlPointToLine(lines.length - 1);
+    ensureLineInDefaultChain(newLine.id!);
+    collapsedSections.lines.push(false);
+    collapsedSections.controlPoints.push(true);
+    recordChange();
+  }
+
   // Add a control point to the line represented by `seqIndex` in the sequence
   function addControlPointToLine(seqIndex: number) {
     const seqItem = sequence[seqIndex];
@@ -741,35 +772,87 @@
     // No collapsedEventMarkers to update
   }
 
-  function moveSequenceItem(seqIndex: number, delta: number) {
-    const targetIndex = seqIndex + delta;
-    if (targetIndex < 0 || targetIndex >= sequence.length) return;
+  // --- Bubble drag-and-drop reordering ---
+  // (Replaces the old adjacent-swap up/down buttons.) Bubbles themselves are
+  // NOT drop targets — only the thin gap slots between them are, so the
+  // layout never resizes while dragging (which was causing the jitter: a
+  // growing/shrinking indicator shifted whatever was under the cursor,
+  // re-triggering the hover event in a feedback loop). Each gap has a
+  // constant-size hit area; only an inner line's color toggles on hover.
+  let draggedSeqIndex: number | null = null;
+  let dragOverGap: number | null = null;
 
-    // Prevent moving if either the source or target is a locked path or a locked wait
-    const isLockedSequenceItem = (index: number) => {
-      const it = sequence[index];
-      if (!it) return false;
-      if (it.kind === "path") {
-        const ln = lines.find((l) => l.id === it.lineId);
-        return ln?.locked ?? false;
-      }
-      // wait
-      if (it.kind === "wait") {
-        return (it as any).locked ?? false;
-      }
-      return false;
-    };
+  function isLockedSequenceItem(index: number): boolean {
+    const it = sequence[index];
+    if (!it) return false;
+    if (it.kind === "path") {
+      const ln = lines.find((l) => l.id === it.lineId);
+      return ln?.locked ?? false;
+    }
+    return (it as any).locked ?? false;
+  }
 
-    if (isLockedSequenceItem(seqIndex) || isLockedSequenceItem(targetIndex))
-      return;
+  // Move the item at `fromIndex` to sit at `toIndex` (arbitrary distance,
+  // unlike moveSequenceItem which only swaps adjacent items).
+  function reorderSequence(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || fromIndex >= sequence.length) return;
+    if (toIndex < 0 || toIndex >= sequence.length) return;
+    if (isLockedSequenceItem(fromIndex)) return;
 
     const newSeq = [...sequence];
-    const [item] = newSeq.splice(seqIndex, 1);
-    newSeq.splice(targetIndex, 0, item);
+    const [item] = newSeq.splice(fromIndex, 1);
+    newSeq.splice(toIndex, 0, item);
     sequence = newSeq;
 
     syncLinesToSequence(newSeq);
     recordChange?.();
+  }
+
+  function handleBubbleDragStart(sIdx: number, e: DragEvent) {
+    if (isLockedSequenceItem(sIdx)) {
+      e.preventDefault();
+      return;
+    }
+    draggedSeqIndex = sIdx;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox requires setData to actually start a drag
+      e.dataTransfer.setData("text/plain", String(sIdx));
+    }
+  }
+
+  function handleBubbleDragEnd() {
+    draggedSeqIndex = null;
+    dragOverGap = null;
+  }
+
+  // `gapIndex` ranges 0..sequence.length: gap 0 sits before the first
+  // bubble, gap sequence.length sits after the last one.
+  function handleGapDragOver(gapIndex: number, e: DragEvent) {
+    e.preventDefault();
+    if (draggedSeqIndex === null) return;
+    dragOverGap = gapIndex;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  }
+
+  function handleGapDragLeave(gapIndex: number) {
+    if (dragOverGap === gapIndex) dragOverGap = null;
+  }
+
+  function handleGapDrop(gapIndex: number, e: DragEvent) {
+    e.preventDefault();
+    if (draggedSeqIndex !== null) {
+      // Dropping into the gap "before item[gapIndex]" means the final
+      // resting index is gapIndex, UNLESS the dragged item currently sits
+      // earlier in the list — removing it first shifts everything after it
+      // back by one, so the target slides down to gapIndex - 1.
+      const targetIndex =
+        draggedSeqIndex < gapIndex ? gapIndex - 1 : gapIndex;
+      reorderSequence(draggedSeqIndex, targetIndex);
+    }
+    draggedSeqIndex = null;
+    dragOverGap = null;
   }
 </script>
 
@@ -831,15 +914,40 @@
       {/if}
     </div>
 
-    <!-- Unified sequence render: paths and waits -->
-    {#each sequence as item, sIdx}
-      <div class="w-full">
+    <PresetsSection bind:positions={savedPositions} bind:headings={savedHeadings} />
+
+    <!-- Unified sequence render: draggable bubbles for paths and waits.
+         Gap slots (fixed height, always present) sit between bubbles and
+         are the only valid drop targets, so hovering never resizes the
+         layout — only the gap's inner line toggles color. -->
+    {#each sequence as item, sIdx (item.kind === "path" ? item.lineId : item.id)}
+      <div
+        class="w-full h-4 relative z-10 shrink-0"
+        role="presentation"
+        on:dragover={(e) => handleGapDragOver(sIdx, e)}
+        on:dragleave={() => handleGapDragLeave(sIdx)}
+        on:drop={(e) => handleGapDrop(sIdx, e)}
+      >
+        <div
+          class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
+            sIdx && draggedSeqIndex !== null
+            ? 'bg-blue-400 dark:bg-blue-500'
+            : 'bg-transparent'}"
+        />
+      </div>
+      <div
+        class="w-full transition-opacity duration-150"
+        class:opacity-40={draggedSeqIndex === sIdx}
+      >
         {#if item.kind === "path"}
           {#each lines.filter((l) => l.id === item.lineId) as ln (ln.id)}
             <PathLineSection
               bind:line={ln}
               idx={lines.findIndex((l) => l.id === ln.id)}
               bind:lines
+              {startPoint}
+              {savedPositions}
+              {savedHeadings}
               bind:collapsed={
                 collapsedSections.lines[lines.findIndex((l) => l.id === ln.id)]
               }
@@ -853,10 +961,8 @@
               onInsertAfter={() => addControlPointToLine(sIdx)}
               onInsertMidpoint={() => insertMidpointAfter(sIdx)}
               onAddWaitAfter={() => insertWaitAfter(sIdx)}
-              onMoveUp={() => moveSequenceItem(sIdx, -1)}
-              onMoveDown={() => moveSequenceItem(sIdx, 1)}
-              canMoveUp={sIdx !== 0}
-              canMoveDown={sIdx !== sequence.length - 1}
+              onDragStart={(e) => handleBubbleDragStart(sIdx, e)}
+              onDragEnd={handleBubbleDragEnd}
               optimizeLine={optimizeLine}
               optimizing={optimizingLineIds?.[ln.id ?? ""] ?? false}
               chainOptions={chainOptions}
@@ -905,14 +1011,28 @@
               sequence = newSeq;
             }}
             onAddPathAfter={() => insertPathAfter(sIdx)}
-            onMoveUp={() => moveSequenceItem(sIdx, -1)}
-            onMoveDown={() => moveSequenceItem(sIdx, 1)}
-            canMoveUp={sIdx !== 0}
-            canMoveDown={sIdx !== sequence.length - 1}
+            onDragStart={(e) => handleBubbleDragStart(sIdx, e)}
+            onDragEnd={handleBubbleDragEnd}
           />
         {/if}
       </div>
     {/each}
+
+    <!-- Trailing gap slot: dropping here places the bubble at the very end -->
+    <div
+      class="w-full h-4 relative z-10 shrink-0"
+      role="presentation"
+      on:dragover={(e) => handleGapDragOver(sequence.length, e)}
+      on:dragleave={() => handleGapDragLeave(sequence.length)}
+      on:drop={(e) => handleGapDrop(sequence.length, e)}
+    >
+      <div
+        class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
+          sequence.length && draggedSeqIndex !== null
+          ? 'bg-blue-400 dark:bg-blue-500'
+          : 'bg-transparent'}"
+      />
+    </div>
 
     <!-- Add Line Button -->
     <div class="flex flex-row items-center gap-4">
@@ -936,6 +1056,28 @@
         </svg>
         <p>Add Path</p>
       </button>
+
+      <button
+        on:click={addCurve}
+        class="font-semibold text-green-500 text-sm flex flex-row justify-start items-center gap-1"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke-width={2}
+          stroke="currentColor"
+          class="size-5"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M12 4.5v15m7.5-7.5h-15"
+          />
+        </svg>
+        <p>Add Curve</p>
+      </button>
+      
 
       <button
         on:click={addWait}

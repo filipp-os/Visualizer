@@ -7,6 +7,8 @@
     SequenceItem,
     PathChain,
     Shape,
+    SavedPosition,
+    SavedHeading,
   } from "./types";
   import * as d3 from "d3";
   import {
@@ -90,6 +92,68 @@
     }));
   }
 
+  // Shortest distance (in field inches) from a point to a segment.
+  function distToSegment(
+    px: number,
+    py: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+  ): number {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  }
+
+  /**
+   * Given a click in field inches near `line`, decide where a new control
+   * point should be inserted so the curve keeps its point ordering. Returns
+   * the index into `line.controlPoints` at which to splice the new point.
+   */
+  function pickControlPointInsertIndex(
+    prevPoint: BasePoint,
+    line: Line,
+    clickInch: BasePoint,
+  ): number {
+    const cps = [prevPoint, ...line.controlPoints, line.endPoint];
+    const SAMPLES = 100;
+    const sampleT: number[] = [];
+    const samplePt: BasePoint[] = [];
+    let clickT = 0;
+    let bestD = Infinity;
+    for (let i = 0; i <= SAMPLES; i++) {
+      const t = i / SAMPLES;
+      const p = getCurvePoint(t, cps);
+      sampleT.push(t);
+      samplePt.push(p);
+      const d = (p.x - clickInch.x) ** 2 + (p.y - clickInch.y) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        clickT = t;
+      }
+    }
+    // Approximate each existing control point's position along the curve by
+    // its nearest sample, then count how many come before the click.
+    let insertIdx = 0;
+    for (const cp of line.controlPoints) {
+      let nearestT = 0;
+      let d2 = Infinity;
+      for (let i = 0; i < samplePt.length; i++) {
+        const d = (samplePt[i].x - cp.x) ** 2 + (samplePt[i].y - cp.y) ** 2;
+        if (d < d2) {
+          d2 = d;
+          nearestT = sampleT[i];
+        }
+      }
+      if (nearestT < clickT) insertIdx++;
+    }
+    return insertIdx;
+  }
+
   // Canvas state
   let two: Two;
   let twoElement: HTMLDivElement;
@@ -117,6 +181,10 @@
   let cancelGifExport = false;
   // Path data
   let settings: Settings = { ...DEFAULT_SETTINGS };
+  // Personal library of saved positions/headings, shared across all path
+  // files (persisted separately from the project file, like Settings).
+  let savedPositions: SavedPosition[] = [];
+  let savedHeadings: SavedHeading[] = [];
   let startPoint: Point = getDefaultStartPoint();
   let lines: Line[] = normalizeLines(getDefaultLines());
 
@@ -192,6 +260,8 @@
       sequence,
       settings,
       pathChains,
+      savedPositions,
+      savedHeadings,
     };
   }
 
@@ -212,6 +282,8 @@
       sequence = prev.sequence;
       settings = prev.settings;
       pathChains = prev.pathChains;
+      savedPositions = prev.savedPositions ?? [];
+      savedHeadings = prev.savedHeadings ?? [];
       isUnsaved.set(true);
       two && two.update();
     }
@@ -228,6 +300,8 @@
       sequence = next.sequence;
       settings = next.settings;
       pathChains = next.pathChains;
+      savedPositions = next.savedPositions ?? [];
+      savedHeadings = next.savedHeadings ?? [];
       isUnsaved.set(true);
       two && two.update();
     }
@@ -1955,6 +2029,8 @@
         shapes,
         sequence,
         pathChains,
+        savedPositions,
+        savedHeadings,
         settings,
         version: "1.2.1",
         timestamp: new Date().toISOString(),
@@ -2110,6 +2186,44 @@
     let currentElem: string | null = null;
     let isDown = false;
     let dragOffset = { x: 0, y: 0 }; // Store offset to prevent snapping to center
+    // Set while hovering a main-path line (between its points) — lets the user
+    // press-and-drag on the line to spawn a new control point and curve it.
+    let hoverLineIdx: number | null = null;
+    // Pending "drag a line to add a curve" gesture, armed on mousedown and
+    // committed once the pointer moves past a small threshold.
+    let pendingCurve:
+      | { lineIdx: number; startClientX: number; startClientY: number }
+      | null = null;
+
+    // Which main-path line (if any) sits under the given client position,
+    // within ~10px. Returns its index in `lines`, or null.
+    const lineIdxUnderPointer = (evt: MouseEvent): number | null => {
+      if (!x || !y) return null;
+      // Main path isn't rendered in multi-path mode — don't offer to edit it.
+      if ($activePaths.length > 0) return null;
+      const rect = two.renderer.domElement.getBoundingClientRect();
+      const inchX = x.invert(evt.clientX - rect.left);
+      const inchY = y.invert(evt.clientY - rect.top);
+      const tol = Math.abs(x.invert(10) - x.invert(0));
+      const SAMPLES = 60;
+      for (let idx = 0; idx < lines.length; idx++) {
+        const line = lines[idx];
+        if (!line || !line.endPoint) continue;
+        const prev = idx === 0 ? startPoint : lines[idx - 1]?.endPoint;
+        if (!prev) continue;
+        const cps = [prev, ...line.controlPoints, line.endPoint];
+        let prevP = getCurvePoint(0, cps);
+        for (let i = 1; i <= SAMPLES; i++) {
+          const p = getCurvePoint(i / SAMPLES, cps);
+          if (
+            distToSegment(inchX, inchY, prevP.x, prevP.y, p.x, p.y) <= tol
+          )
+            return idx;
+          prevP = p;
+        }
+      }
+      return null;
+    };
 
     const isLockedPathElem = (id: string | null): boolean => {
       if (!id || !id.startsWith("point")) return false;
@@ -2122,6 +2236,41 @@
 
     two.renderer.domElement.addEventListener("mousemove", (evt: MouseEvent) => {
       const elem = document.elementFromPoint(evt.clientX, evt.clientY);
+
+      // Commit a "drag on a line to add a curve" gesture: once the pointer
+      // has moved a little, insert a control point where the drag started
+      // and hand off to the normal point-drag logic below.
+      if (isDown && pendingCurve && !currentElem) {
+        const movedEnough =
+          Math.hypot(
+            evt.clientX - pendingCurve.startClientX,
+            evt.clientY - pendingCurve.startClientY,
+          ) >= 4;
+        if (!movedEnough) return;
+
+        const lineIdx = pendingCurve.lineIdx;
+        const line = lines[lineIdx];
+        pendingCurve = null;
+        if (!line || line.locked) return;
+
+        const rect = two.renderer.domElement.getBoundingClientRect();
+        const inchPt = {
+          x: x.invert(evt.clientX - rect.left),
+          y: y.invert(evt.clientY - rect.top),
+        };
+        const prevPoint =
+          lineIdx === 0 ? startPoint : lines[lineIdx - 1]?.endPoint;
+        if (!prevPoint) return;
+
+        const insertIdx = pickControlPointInsertIndex(prevPoint, line, inchPt);
+        line.controlPoints.splice(insertIdx, 0, { x: inchPt.x, y: inchPt.y });
+        lines = [...lines];
+
+        currentElem = `point-${lineIdx + 1}-${insertIdx + 1}`;
+        dragOffset = { x: 0, y: 0 };
+        two.update();
+        // fall through so this same event starts dragging the new point
+      }
 
       if (isDown && currentElem) {
         const parts = currentElem.split("-");
@@ -2245,6 +2394,7 @@
               lines[line].controlPoints[point - 1].x = inchX;
               lines[line].controlPoints[point - 1].y = inchY;
             }
+            lines = [...lines];
           }
         }
       } else {
@@ -2256,8 +2406,18 @@
         ) {
           two.renderer.domElement.style.cursor = "pointer";
           currentElem = elem.id;
+          hoverLineIdx = null;
         } else {
-          two.renderer.domElement.style.cursor = "auto";
+          // Not over a point — check for a bare main-path line so the user
+          // can press-drag on it to add a curve.
+          const overLine = lineIdxUnderPointer(evt);
+          if (overLine !== null && !lines[overLine]?.locked) {
+            two.renderer.domElement.style.cursor = "crosshair";
+            hoverLineIdx = overLine;
+          } else {
+            two.renderer.domElement.style.cursor = "auto";
+            hoverLineIdx = null;
+          }
           currentElem = null;
         }
       }
@@ -2270,6 +2430,18 @@
       }
 
       isDown = true;
+
+      // Pressed on a bare stretch of a main-path line: arm the "drag to add a
+      // curve" gesture. The control point is only created once the pointer
+      // actually moves (handled in mousemove), so a plain click does nothing.
+      if (!currentElem && hoverLineIdx !== null && !lines[hoverLineIdx]?.locked) {
+        pendingCurve = {
+          lineIdx: hoverLineIdx,
+          startClientX: evt.clientX,
+          startClientY: evt.clientY,
+        };
+        return;
+      }
 
       if (currentElem) {
         const rect = two.renderer.domElement.getBoundingClientRect();
@@ -2357,6 +2529,7 @@
     two.renderer.domElement.addEventListener("mouseup", () => {
       isDown = false;
       dragOffset = { x: 0, y: 0 };
+      pendingCurve = null;
       recordChange();
     });
 
@@ -2436,6 +2609,8 @@
           shapes,
           sequence,
           pathChains,
+          savedPositions,
+          savedHeadings,
           settings,
           version: "1.2.1",
           timestamp: new Date().toISOString(),
@@ -2558,6 +2733,12 @@
 
     // Load shapes with defaults
     shapes = data.shapes || [];
+
+    // Load saved positions/headings library (stored inside the project file)
+    savedPositions = Array.isArray(data.savedPositions)
+      ? data.savedPositions
+      : [];
+    savedHeadings = Array.isArray(data.savedHeadings) ? data.savedHeadings : [];
 
     // Load settings (including robot size) if present
     if (data.settings) {
@@ -2882,6 +3063,8 @@
           shapes,
           sequence,
           pathChains,
+          savedPositions,
+          savedHeadings,
           settings,
         });
         
@@ -2913,6 +3096,8 @@
             shapes,
             sequence,
             pathChains,
+            savedPositions,
+            savedHeadings,
             settings,
             version: "1.2.1",
             timestamp: new Date().toISOString(),
@@ -2939,6 +3124,8 @@
               shapes,
               sequence,
               pathChains,
+              savedPositions,
+              savedHeadings,
               settings,
               version: "1.2.1",
               timestamp: new Date().toISOString(),
@@ -3254,6 +3441,8 @@ pointer-events: none; opacity: ${1.0 - idx * 0.15};`}
     bind:lines
     bind:sequence
     bind:pathChains
+    bind:savedPositions
+    bind:savedHeadings
     bind:robotWidth
     bind:robotHeight
     bind:settings

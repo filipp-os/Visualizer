@@ -7,10 +7,8 @@
   export let onRemove: () => void;
   export let onInsertAfter: () => void;
   export let onAddPathAfter: () => void;
-  export let onMoveUp: () => void;
-  export let onMoveDown: () => void;
-  export let canMoveUp: boolean = true;
-  export let canMoveDown: boolean = true;
+  export let onDragStart: (e: DragEvent) => void;
+  export let onDragEnd: () => void;
 
   function handleNameChange(e: Event) {
     const target = e.currentTarget as HTMLInputElement;
@@ -25,9 +23,26 @@
 </script>
 
 <div
-  class="flex w-full items-center justify-between gap-2 px-2 py-1 rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-900"
+  class="flex w-full items-center justify-between gap-2 px-2 py-1.5 rounded-full border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 shadow-sm"
 >
   <div class="flex items-center gap-2">
+    <!-- Drag handle: grab anywhere on this to reorder the bubble -->
+    <span
+      draggable="true"
+      on:dragstart={onDragStart}
+      on:dragend={onDragEnd}
+      title="Drag to reorder"
+      role="button"
+      tabindex="0"
+      aria-label="Drag to reorder this wait bubble"
+      class="cursor-grab active:cursor-grabbing text-amber-400 dark:text-amber-500 hover:text-amber-600 dark:hover:text-amber-300 shrink-0 select-none"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+        <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+        <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+        <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+      </svg>
+    </span>
     <span
       class="px-1.5 py-0.5 text-xs rounded bg-amber-200 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
       >Wait</span
@@ -93,55 +108,6 @@
         </svg>
       {/if}
     </button>
-
-    <div class="flex flex-row gap-0.5 mr-1">
-      <button
-        title="Move up"
-        on:click={() => {
-          if (!locked && onMoveUp) onMoveUp();
-        }}
-        class="p-1 rounded-full text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 bg-neutral-100/70 dark:bg-neutral-900/70 border border-neutral-200/70 dark:border-neutral-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
-        disabled={!canMoveUp || locked}
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          class="size-4"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="m5 15 7-7 7 7"
-          />
-        </svg>
-      </button>
-      <button
-        title="Move down"
-        on:click={() => {
-          if (!locked && onMoveDown) onMoveDown();
-        }}
-        class="p-1 rounded-full text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 bg-neutral-100/70 dark:bg-neutral-900/70 border border-neutral-200/70 dark:border-neutral-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
-        disabled={!canMoveDown || locked}
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          class="size-4"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="m19 9-7 7-7-7"
-          />
-        </svg>
-      </button>
-    </div>
 
     <button
       title="Add path after"
