@@ -21,6 +21,13 @@
   export let recordChange: () => void;
   export let onDragStart: (e: DragEvent) => void;
   export let onDragEnd: () => void;
+  // True while a saved heading is being dragged — lets this bubble act as a
+  // drop target that applies that heading to this path.
+  export let draggingHeading: boolean = false;
+  export let onHeadingDrop: () => void = () => {};
+
+  let headingDragOver = false;
+  $: if (!draggingHeading) headingDragOver = false;
   export let optimizeLine: (lineId: string, targetControlPointIndex?: number) => void;
   export let optimizing: boolean = false;
   export let chainOptions: Array<{ id: string; name: string; color: string }> = [];
@@ -58,8 +65,28 @@
 </script>
 
 <div
-  class="flex flex-col w-full justify-start items-start gap-0 rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm overflow-hidden"
+  class="flex flex-col w-full justify-start items-start gap-0 rounded-2xl border bg-white dark:bg-neutral-800 shadow-sm overflow-hidden transition-shadow {headingDragOver
+    ? 'border-purple-400 dark:border-purple-500 ring-2 ring-purple-400/60'
+    : 'border-neutral-200 dark:border-neutral-700'}"
   style="--bubble-color: {line.color}"
+  role="presentation"
+  on:dragover={(e) => {
+    if (!draggingHeading || line.locked) return;
+    e.preventDefault();
+    headingDragOver = true;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }}
+  on:dragleave={(e) => {
+    if (e.currentTarget instanceof HTMLElement && e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))
+      return;
+    headingDragOver = false;
+  }}
+  on:drop={(e) => {
+    if (!draggingHeading || line.locked) return;
+    e.preventDefault();
+    headingDragOver = false;
+    onHeadingDrop();
+  }}
 >
   <div
     class="flex flex-row w-full items-center gap-3 flex-wrap px-2 py-1.5 rounded-full"

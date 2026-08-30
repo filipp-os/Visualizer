@@ -5,6 +5,30 @@
   export let headings: SavedHeading[] = [];
   export let collapsed: boolean = false;
 
+  // Drag a position/heading grip onto the timeline; double-click to apply it
+  // to the end of the sequence / the last path. Wired up by ControlTab.
+  export let onPresetDragStart: (
+    kind: "position" | "heading",
+    id: string,
+  ) => void = () => {};
+  export let onPresetDragEnd: () => void = () => {};
+  export let onActivatePosition: (id: string) => void = () => {};
+  export let onActivateHeading: (id: string) => void = () => {};
+
+  function startPresetDrag(
+    kind: "position" | "heading",
+    id: string,
+    name: string,
+    e: DragEvent,
+  ) {
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.setData(`application/x-pp-${kind}`, id);
+      e.dataTransfer.setData("text/plain", name);
+    }
+    onPresetDragStart(kind, id);
+  }
+
   const makeId = () =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -71,8 +95,37 @@
       {#each positions as pos (pos.id)}
         <div
           class="flex flex-col gap-1 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 p-2"
+          role="button"
+          tabindex="0"
+          title="Double-click to append as a path • drag the grip onto the timeline"
+          on:dblclick={(e) => {
+            if (!(e.target instanceof HTMLElement) || !e.target.closest("input,button,textarea"))
+              onActivatePosition(pos.id);
+          }}
+          on:keydown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+              e.preventDefault();
+              onActivatePosition(pos.id);
+            }
+          }}
         >
           <div class="flex items-center gap-1">
+            <span
+              draggable="true"
+              on:dragstart={(e) => startPresetDrag("position", pos.id, pos.name, e)}
+              on:dragend={onPresetDragEnd}
+              title="Drag onto a timeline gap to add as a path"
+              role="button"
+              tabindex="0"
+              aria-label="Drag {pos.name} into the timeline"
+              class="cursor-grab active:cursor-grabbing text-sky-400 hover:text-sky-600 dark:hover:text-sky-300 shrink-0 select-none"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+                <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+                <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+              </svg>
+            </span>
             <input
               bind:value={pos.name}
               placeholder="Name"
@@ -156,8 +209,37 @@
       {#each headings as h (h.id)}
         <div
           class="flex flex-col gap-1 rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/50 p-2"
+          role="button"
+          tabindex="0"
+          title="Double-click to apply to the last path • drag the grip onto a path"
+          on:dblclick={(e) => {
+            if (!(e.target instanceof HTMLElement) || !e.target.closest("input,button,textarea"))
+              onActivateHeading(h.id);
+          }}
+          on:keydown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+              e.preventDefault();
+              onActivateHeading(h.id);
+            }
+          }}
         >
           <div class="flex items-center gap-1">
+            <span
+              draggable="true"
+              on:dragstart={(e) => startPresetDrag("heading", h.id, h.name, e)}
+              on:dragend={onPresetDragEnd}
+              title="Drag onto a path to set its heading"
+              role="button"
+              tabindex="0"
+              aria-label="Drag {h.name} onto a path"
+              class="cursor-grab active:cursor-grabbing text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 shrink-0 select-none"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+                <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+                <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+              </svg>
+            </span>
             <input
               bind:value={h.name}
               placeholder="Name"

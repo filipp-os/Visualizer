@@ -185,6 +185,11 @@
   // files (persisted separately from the project file, like Settings).
   let savedPositions: SavedPosition[] = [];
   let savedHeadings: SavedHeading[] = [];
+  // Named, reusable sequences of paths + waits (the "Path Groups" library),
+  // and the group instances currently placed in the timeline. Persisted in
+  // the project file alongside sequence/pathChains.
+  let pathGroups: any[] = [];
+  let groupInstances: any[] = [];
   let startPoint: Point = getDefaultStartPoint();
   let lines: Line[] = normalizeLines(getDefaultLines());
 
@@ -262,6 +267,8 @@
       pathChains,
       savedPositions,
       savedHeadings,
+      pathGroups,
+      groupInstances,
     };
   }
 
@@ -284,6 +291,8 @@
       pathChains = prev.pathChains;
       savedPositions = prev.savedPositions ?? [];
       savedHeadings = prev.savedHeadings ?? [];
+      pathGroups = prev.pathGroups ?? [];
+      groupInstances = prev.groupInstances ?? [];
       isUnsaved.set(true);
       two && two.update();
     }
@@ -302,6 +311,8 @@
       pathChains = next.pathChains;
       savedPositions = next.savedPositions ?? [];
       savedHeadings = next.savedHeadings ?? [];
+      pathGroups = next.pathGroups ?? [];
+      groupInstances = next.groupInstances ?? [];
       isUnsaved.set(true);
       two && two.update();
     }
@@ -2031,6 +2042,8 @@
         pathChains,
         savedPositions,
         savedHeadings,
+        pathGroups,
+        groupInstances,
         settings,
         version: "1.2.1",
         timestamp: new Date().toISOString(),
@@ -2611,6 +2624,8 @@
           pathChains,
           savedPositions,
           savedHeadings,
+          pathGroups,
+          groupInstances,
           settings,
           version: "1.2.1",
           timestamp: new Date().toISOString(),
@@ -2676,6 +2691,10 @@
             }))
       ) as SequenceItem[];
       pathChains = normalizePathChains(data.pathChains, normalizedLines);
+      pathGroups = Array.isArray(data.pathGroups) ? data.pathGroups : [];
+      groupInstances = Array.isArray(data.groupInstances)
+        ? data.groupInstances
+        : [];
 
       // Load shapes with defaults
       shapes = data.shapes || [];
@@ -2739,6 +2758,10 @@
       ? data.savedPositions
       : [];
     savedHeadings = Array.isArray(data.savedHeadings) ? data.savedHeadings : [];
+    pathGroups = Array.isArray(data.pathGroups) ? data.pathGroups : [];
+    groupInstances = Array.isArray(data.groupInstances)
+      ? data.groupInstances
+      : [];
 
     // Load settings (including robot size) if present
     if (data.settings) {
@@ -3065,6 +3088,8 @@
           pathChains,
           savedPositions,
           savedHeadings,
+          pathGroups,
+          groupInstances,
           settings,
         });
         
@@ -3098,6 +3123,8 @@
             pathChains,
             savedPositions,
             savedHeadings,
+            pathGroups,
+            groupInstances,
             settings,
             version: "1.2.1",
             timestamp: new Date().toISOString(),
@@ -3126,6 +3153,8 @@
               pathChains,
               savedPositions,
               savedHeadings,
+              pathGroups,
+              groupInstances,
               settings,
               version: "1.2.1",
               timestamp: new Date().toISOString(),
@@ -3443,6 +3472,8 @@ pointer-events: none; opacity: ${1.0 - idx * 0.15};`}
     bind:pathChains
     bind:savedPositions
     bind:savedHeadings
+    bind:pathGroups
+    bind:groupInstances
     bind:robotWidth
     bind:robotHeight
     bind:settings

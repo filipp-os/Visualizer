@@ -19,6 +19,8 @@ export type AppState = {
   pathChains: PathChain[];
   savedPositions: SavedPosition[];
   savedHeadings: SavedHeading[];
+  pathGroups?: any[];
+  groupInstances?: any[];
 };
 
 function deepClone<T>(obj: T): T {

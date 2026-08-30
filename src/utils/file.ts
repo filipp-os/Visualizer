@@ -11,6 +11,10 @@ export interface SaveData {
   settings?: any;
   sequence?: SequenceItem[];
   pathChains?: PathChain[];
+  savedPositions?: any[];
+  savedHeadings?: any[];
+  pathGroups?: any[];
+  groupInstances?: any[];
 }
 
 /**

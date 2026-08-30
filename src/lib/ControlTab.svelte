@@ -11,7 +11,10 @@
     SavedHeading,
   } from "../types";
   import _ from "lodash";
+  import { onMount } from "svelte";
+  import hotkeys from "hotkeys-js";
   import { getRandomColor } from "../utils";
+  import { pathClipboard } from "../stores";
   import ObstaclesSection from "./components/ObstaclesSection.svelte";
   import RobotPositionDisplay from "./components/RobotPositionDisplay.svelte";
   import StartingPointSection from "./components/StartingPointSection.svelte";
@@ -19,6 +22,8 @@
   import PlaybackControls from "./components/PlaybackControls.svelte";
   import WaitRow from "./components/WaitRow.svelte";
   import PresetsSection from "./components/PresetsSection.svelte";
+  import PathGroupsSection from "./components/PathGroupsSection.svelte";
+  import TimelineContextMenu from "./components/TimelineContextMenu.svelte";
   import { calculatePathTime } from "../utils";
 
   export let percent: number;
@@ -31,6 +36,9 @@
   export let pathChains: PathChain[] = [];
   export let savedPositions: SavedPosition[] = [];
   export let savedHeadings: SavedHeading[] = [];
+  // Path Groups library + the group instances currently in the timeline.
+  export let pathGroups: any[] = [];
+  export let groupInstances: any[] = [];
   export let robotWidth: number = 16;
   export let robotHeight: number = 16;
   export let robotXY: BasePoint;
@@ -781,6 +789,19 @@
   // constant-size hit area; only an inner line's color toggles on hover.
   let draggedSeqIndex: number | null = null;
   let dragOverGap: number | null = null;
+  // Set while a saved position/heading grip is being dragged (see the
+  // "Saved position / heading drag-and-drop" section below).
+  let draggedPreset: { kind: "position" | "heading"; id: string } | null = null;
+  // Set while a whole collapsed group bubble is being dragged in the timeline.
+  let draggedGroupId: string | null = null;
+  // Set while a group card from the library is being dragged.
+  let draggedLibGroupId: string | null = null;
+
+  $: gapArmed =
+    draggedSeqIndex !== null ||
+    draggedGroupId !== null ||
+    draggedLibGroupId !== null ||
+    draggedPreset?.kind === "position";
 
   function isLockedSequenceItem(index: number): boolean {
     const it = sequence[index];
@@ -793,19 +814,40 @@
   }
 
   // Move the item at `fromIndex` to sit at `toIndex` (arbitrary distance,
-  // unlike moveSequenceItem which only swaps adjacent items).
-  function reorderSequence(fromIndex: number, toIndex: number) {
-    if (fromIndex === toIndex) return;
+  // unlike moveSequenceItem which only swaps adjacent items). `groupId`:
+  // undefined = keep the item's group membership, null = clear it, string =
+  // set it (used when dropping into / out of a group's territory).
+  function reorderSequence(
+    fromIndex: number,
+    toIndex: number,
+    groupId: string | null | undefined = undefined,
+  ) {
+    if (fromIndex === toIndex && groupId === undefined) return;
     if (fromIndex < 0 || fromIndex >= sequence.length) return;
     if (toIndex < 0 || toIndex >= sequence.length) return;
     if (isLockedSequenceItem(fromIndex)) return;
 
     const newSeq = [...sequence];
-    const [item] = newSeq.splice(fromIndex, 1);
+    const [item] = newSeq.splice(fromIndex, 1) as any[];
+    if (groupId === null) delete item.groupInstanceId;
+    else if (typeof groupId === "string") item.groupInstanceId = groupId;
     newSeq.splice(toIndex, 0, item);
     sequence = newSeq;
 
     syncLinesToSequence(newSeq);
+    recordChange?.();
+  }
+
+  // Move every member of a group as one contiguous block to `gapIndex`.
+  function moveGroupBlock(gid: string, gapIndex: number) {
+    const memberIdxs = groupMemberIdxs(gid);
+    if (!memberIdxs.length) return;
+    const block = memberIdxs.map((i) => sequence[i]);
+    const rest = sequence.filter((it: any) => it.groupInstanceId !== gid);
+    const removedBefore = memberIdxs.filter((i) => i < gapIndex).length;
+    const insertAt = Math.max(0, Math.min(gapIndex - removedBefore, rest.length));
+    sequence = [...rest.slice(0, insertAt), ...block, ...rest.slice(insertAt)];
+    syncLinesToSequence(sequence);
     recordChange?.();
   }
 
@@ -827,33 +869,600 @@
     dragOverGap = null;
   }
 
+  function handleGroupDragStart(gid: string, e: DragEvent) {
+    draggedGroupId = gid;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "group:" + gid);
+    }
+  }
+  function handleGroupDragEnd() {
+    draggedGroupId = null;
+    dragOverGap = null;
+  }
+
   // `gapIndex` ranges 0..sequence.length: gap 0 sits before the first
-  // bubble, gap sequence.length sits after the last one.
+  // bubble, gap sequence.length sits after the last one. `groupId` (when the
+  // gap sits inside an expanded group) tags anything dropped there.
   function handleGapDragOver(gapIndex: number, e: DragEvent) {
     e.preventDefault();
-    if (draggedSeqIndex === null) return;
-    dragOverGap = gapIndex;
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    if (draggedSeqIndex !== null || draggedGroupId !== null) {
+      dragOverGap = gapIndex;
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      return;
+    }
+    const types = e.dataTransfer?.types ?? [];
+    if (
+      draggedPreset?.kind === "position" ||
+      draggedLibGroupId !== null ||
+      types.includes("application/x-pp-position") ||
+      types.includes("application/x-pp-group")
+    ) {
+      dragOverGap = gapIndex;
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    }
   }
 
   function handleGapDragLeave(gapIndex: number) {
     if (dragOverGap === gapIndex) dragOverGap = null;
   }
 
-  function handleGapDrop(gapIndex: number, e: DragEvent) {
+  function handleGapDrop(
+    gapIndex: number,
+    e: DragEvent,
+    groupId: string | null = null,
+  ) {
     e.preventDefault();
-    if (draggedSeqIndex !== null) {
+    if (draggedGroupId !== null) {
+      moveGroupBlock(draggedGroupId, gapIndex);
+    } else if (draggedSeqIndex !== null) {
       // Dropping into the gap "before item[gapIndex]" means the final
       // resting index is gapIndex, UNLESS the dragged item currently sits
       // earlier in the list — removing it first shifts everything after it
       // back by one, so the target slides down to gapIndex - 1.
       const targetIndex =
         draggedSeqIndex < gapIndex ? gapIndex - 1 : gapIndex;
-      reorderSequence(draggedSeqIndex, targetIndex);
+      reorderSequence(draggedSeqIndex, targetIndex, groupId);
+    } else if (draggedPreset?.kind === "position") {
+      insertPositionAsPath(draggedPreset.id, gapIndex, groupId);
+    } else {
+      const posId = e.dataTransfer?.getData("application/x-pp-position");
+      const grpId = e.dataTransfer?.getData("application/x-pp-group");
+      if (posId) insertPositionAsPath(posId, gapIndex, groupId);
+      else if (grpId) insertGroupFromLibrary(grpId, gapIndex);
     }
     draggedSeqIndex = null;
     dragOverGap = null;
+    draggedPreset = null;
+    draggedGroupId = null;
+    draggedLibGroupId = null;
   }
+
+  // --- Saved position / heading drag-and-drop ---
+  // A saved *position* dropped into a timeline gap becomes a new linear path
+  // ending at that position (end heading = the position's heading, else 0),
+  // linked to the position. A saved *heading* dropped onto a path bubble
+  // fills that path's constant/end heading and links it.
+  function handlePresetDragStart(kind: "position" | "heading", id: string) {
+    draggedPreset = { kind, id };
+  }
+  function handlePresetDragEnd() {
+    draggedPreset = null;
+  }
+
+  function makePresetLink(
+    kind: "position" | "heading",
+    item: { id: string; name: string },
+  ) {
+    return { sourceType: kind, sourceId: item.id, sourceName: item.name };
+  }
+
+  function buildPositionLine(pos: any): Line {
+    const link = makePresetLink("position", pos);
+    const endPoint: any = {
+      x: pos.x,
+      y: pos.y,
+      heading: "linear",
+      startDeg: 0, // auto-follows the previous path's end heading in HeadingControls
+      endDeg: pos.heading ?? 0,
+      customStartHeading: false,
+      positionLink: link,
+    };
+    // Only claim a heading link when the position actually carries a heading.
+    if (pos.heading !== undefined && pos.heading !== null) {
+      endPoint.endHeadingLink = { ...link };
+    }
+    return {
+      id: makeId(),
+      name: pos.name || `Path ${lines.length + 1}`,
+      endPoint,
+      controlPoints: [],
+      color: getRandomColor(),
+      waitBeforeMs: 0,
+      waitAfterMs: 0,
+      waitBeforeName: "",
+      waitAfterName: "",
+    } as Line;
+  }
+
+  function insertPositionAsPath(
+    posId: string,
+    seqIndex: number,
+    groupId: string | null = null,
+  ) {
+    const pos = (savedPositions as any[]).find((p) => p.id === posId);
+    if (!pos) return;
+    const newLine = buildPositionLine(pos);
+    const clamped = Math.max(0, Math.min(seqIndex, sequence.length));
+
+    lines = [...lines, newLine];
+    const newSeq = [...sequence];
+    const item: any = { kind: "path", lineId: newLine.id! };
+    if (groupId) item.groupInstanceId = groupId;
+    newSeq.splice(clamped, 0, item);
+    sequence = newSeq;
+    syncLinesToSequence(newSeq);
+    ensureLineInDefaultChain(newLine.id!);
+    recordChange?.();
+  }
+
+  function applyHeadingToLine(lineId: string, headingId: string) {
+    const h = (savedHeadings as any[]).find((hh) => hh.id === headingId);
+    if (!h || !lineId) return;
+    const line = lines.find((l) => l.id === lineId);
+    if (!line || line.locked) return;
+    const ep = line.endPoint as any;
+    const link = makePresetLink("heading", h);
+    if (ep.heading === "linear") {
+      ep.endDeg = h.degrees;
+      ep.endHeadingLink = link;
+    } else {
+      // constant — and tangential becomes constant, since dropping a heading
+      // is an explicit request for that heading.
+      ep.heading = "constant";
+      ep.degrees = h.degrees;
+      ep.headingLink = link;
+    }
+    lines = [...lines];
+    recordChange?.();
+  }
+
+  // Double-click a saved position: append it as a path at the end.
+  function appendPositionAsPath(posId: string) {
+    insertPositionAsPath(posId, sequence.length);
+  }
+
+  // Double-click a saved heading: apply it to the last path in the sequence.
+  function applyHeadingToLastPath(headingId: string) {
+    for (let i = sequence.length - 1; i >= 0; i--) {
+      const it = sequence[i];
+      if (it.kind === "path") {
+        applyHeadingToLine(it.lineId, headingId);
+        return;
+      }
+    }
+  }
+
+  // =========================================================================
+  // Path groups, selection, clipboard, and the bubble context menu
+  // =========================================================================
+
+  $: groupInstById = new Map(
+    (groupInstances || []).map((g: any) => [g.id, g]),
+  );
+
+  const seqKey = (it: any) =>
+    it.kind === "path" ? "p:" + it.lineId : "w:" + it.id;
+
+  const gidOf = (it: any): string | undefined => it?.groupInstanceId;
+
+  function groupMemberIdxs(gid: string): number[] {
+    const out: number[] = [];
+    sequence.forEach((it: any, i) => {
+      if (it.groupInstanceId === gid) out.push(i);
+    });
+    return out;
+  }
+
+  // Drop stray group instances whose members were all removed / ungrouped.
+  $: {
+    const live = new Set(
+      sequence.map((it: any) => it.groupInstanceId).filter(Boolean),
+    );
+    if ((groupInstances || []).some((g: any) => !live.has(g.id))) {
+      groupInstances = groupInstances.filter((g: any) => live.has(g.id));
+    }
+  }
+
+  function toggleGroupCollapsed(gid: string) {
+    groupInstances = groupInstances.map((g: any) =>
+      g.id === gid ? { ...g, collapsed: !g.collapsed } : g,
+    );
+  }
+  function renameGroupInstanceLive(gid: string, name: string) {
+    groupInstances = groupInstances.map((g: any) =>
+      g.id === gid ? { ...g, name } : g,
+    );
+  }
+
+  // Build reusable library-group items from a run of sequence entries.
+  function snapshotItems(idxs: number[]) {
+    const items: any[] = [];
+    idxs.forEach((i) => {
+      const it: any = sequence[i];
+      if (it.kind === "path") {
+        const ln = lines.find((l) => l.id === it.lineId);
+        if (ln) items.push({ kind: "path", line: JSON.parse(JSON.stringify(ln)) });
+      } else {
+        items.push({
+          kind: "wait",
+          name: it.name,
+          durationMs: it.durationMs,
+        });
+      }
+    });
+    return items;
+  }
+
+  // Turn a { name, items } group definition into real lines + sequence items,
+  // spliced in at `seqIndex`, wrapped in a fresh (collapsed) group instance.
+  function materializeGroup(src: any, seqIndex: number, groupId: string) {
+    const instId = makeId();
+    const newLines: Line[] = [];
+    const newItems: any[] = [];
+    (src.items || []).forEach((it: any) => {
+      if (it.kind === "path") {
+        const clone = JSON.parse(JSON.stringify(it.line)) as Line;
+        clone.id = makeId();
+        newLines.push(clone);
+        newItems.push({
+          kind: "path",
+          lineId: clone.id,
+          groupInstanceId: instId,
+        });
+      } else {
+        newItems.push({
+          kind: "wait",
+          id: makeId(),
+          name: it.name,
+          durationMs: it.durationMs,
+          groupInstanceId: instId,
+        });
+      }
+    });
+
+    lines = [...lines, ...newLines];
+    const clamped = Math.max(0, Math.min(seqIndex, sequence.length));
+    const newSeq = [...sequence];
+    newSeq.splice(clamped, 0, ...newItems);
+    sequence = newSeq;
+    groupInstances = [
+      ...groupInstances,
+      { id: instId, groupId: groupId || "", name: src.name, collapsed: true },
+    ];
+    syncLinesToSequence(newSeq);
+    newLines.forEach((l) => l.id && ensureLineInDefaultChain(l.id));
+    recordChange?.();
+  }
+
+  function insertGroupFromLibrary(groupId: string, seqIndex: number) {
+    const g = (pathGroups || []).find((x: any) => x.id === groupId);
+    if (!g) return;
+    materializeGroup(g, seqIndex, groupId);
+  }
+
+  function ungroup(gid: string) {
+    sequence = sequence.map((it: any) => {
+      if (it.groupInstanceId !== gid) return it;
+      const { groupInstanceId, ...rest } = it;
+      return rest;
+    });
+    groupInstances = groupInstances.filter((g: any) => g.id !== gid);
+    recordChange?.();
+  }
+
+  function deleteGroupInstance(gid: string) {
+    const memberIdxs = groupMemberIdxs(gid);
+    const lineIds = new Set(
+      memberIdxs
+        .map((i) => sequence[i])
+        .filter((it: any) => it.kind === "path")
+        .map((it: any) => it.lineId),
+    );
+    sequence = sequence.filter((it: any) => it.groupInstanceId !== gid);
+    lines = lines.filter((l) => !lineIds.has(l.id));
+    lineIds.forEach((id) => removeLineFromChains(id as string));
+    groupInstances = groupInstances.filter((g: any) => g.id !== gid);
+    syncLinesToSequence(sequence);
+    recordChange?.();
+  }
+
+  function copyGroupInstance(gid: string) {
+    const inst: any = groupInstById.get(gid);
+    pathClipboard.set({
+      kind: "group",
+      group: {
+        name: inst?.name || "Group",
+        items: snapshotItems(groupMemberIdxs(gid)),
+      },
+    });
+  }
+
+  function duplicateGroupInstance(gid: string) {
+    const inst: any = groupInstById.get(gid);
+    const memberIdxs = groupMemberIdxs(gid);
+    const after = (memberIdxs[memberIdxs.length - 1] ?? -1) + 1;
+    materializeGroup(
+      { name: (inst?.name || "Group") + " Copy", items: snapshotItems(memberIdxs) },
+      after,
+      inst?.groupId || "",
+    );
+  }
+
+  // ---- Selection (click / shift / cmd) --------------------------------------
+  let selectedKeys: string[] = [];
+  let lastClickedIdx: number | null = null;
+
+  // Reactive so the selection bar / ring re-render (Svelte doesn't track
+  // deps through a plain function call in markup).
+  $: selectedKeySet = new Set(selectedKeys);
+  $: selectedIdxList = selectedKeys.length
+    ? sequence.reduce<number[]>((acc, it: any, i) => {
+        if (selectedKeySet.has(seqKey(it))) acc.push(i);
+        return acc;
+      }, [])
+    : [];
+  $: selCount = selectedIdxList.length;
+  $: selHasGrouped = selectedIdxList.some((i) => gidOf(sequence[i]));
+
+  const selectedIndices = () =>
+    sequence
+      .map((it: any, i) => (selectedKeys.includes(seqKey(it)) ? i : -1))
+      .filter((i) => i >= 0);
+  const selectionHasGrouped = () =>
+    selectedIndices().some((i) => (sequence[i] as any).groupInstanceId);
+
+  function clearSelection() {
+    selectedKeys = [];
+    lastClickedIdx = null;
+  }
+
+  function onBubbleClick(i: number, e: MouseEvent) {
+    const t = e.target as HTMLElement | null;
+    if (
+      t &&
+      t.closest(
+        'button,input,select,textarea,a,[role="button"],[draggable="true"]',
+      )
+    )
+      return;
+    const key = seqKey(sequence[i]);
+    if (e.shiftKey && lastClickedIdx !== null) {
+      const lo = Math.min(lastClickedIdx, i);
+      const hi = Math.max(lastClickedIdx, i);
+      const range = sequence.slice(lo, hi + 1).map(seqKey);
+      selectedKeys = Array.from(new Set([...selectedKeys, ...range]));
+    } else if (e.metaKey || e.ctrlKey) {
+      selectedKeys = selectedKeys.includes(key)
+        ? selectedKeys.filter((k) => k !== key)
+        : [...selectedKeys, key];
+      lastClickedIdx = i;
+    } else {
+      selectedKeys = [key];
+      lastClickedIdx = i;
+    }
+  }
+
+  // ---- Group the current selection into a new named group -----------------
+  function groupSelected() {
+    const idxs = selectedIndices();
+    if (idxs.length < 1) return;
+    const lo = Math.min(...idxs);
+    const hi = Math.max(...idxs);
+    for (let i = lo; i <= hi; i++) {
+      if ((sequence[i] as any).groupInstanceId) {
+        alert("Some of the selected bubbles are already in a group.");
+        return;
+      }
+    }
+    const suggested = `Group ${(pathGroups?.length ?? 0) + 1}`;
+    const name = prompt("Name this path group:", suggested);
+    if (name === null) return;
+    const finalName = name.trim() || suggested;
+
+    const span: number[] = [];
+    for (let i = lo; i <= hi; i++) span.push(i);
+
+    const groupId = makeId();
+    const instId = makeId();
+    pathGroups = [
+      ...pathGroups,
+      { id: groupId, name: finalName, items: snapshotItems(span) },
+    ];
+    groupInstances = [
+      ...groupInstances,
+      { id: instId, groupId, name: finalName, collapsed: true },
+    ];
+    sequence = sequence.map((it: any, i) =>
+      i >= lo && i <= hi ? { ...it, groupInstanceId: instId } : it,
+    );
+    clearSelection();
+    recordChange?.();
+  }
+
+  // ---- Copy / duplicate / paste (context menu + Cmd+C/D/V) ---------------
+  function copyIdx(i: number) {
+    const it: any = sequence[i];
+    if (it.kind === "path") {
+      const ln = lines.find((l) => l.id === it.lineId);
+      if (!ln) return;
+      const clone: any = JSON.parse(JSON.stringify(ln));
+      delete clone.id;
+      pathClipboard.set({ kind: "path", line: clone });
+    } else {
+      pathClipboard.set({
+        kind: "wait",
+        name: it.name,
+        durationMs: it.durationMs,
+      });
+    }
+  }
+
+  function duplicateIdx(i: number) {
+    const it: any = sequence[i];
+    const gid = it.groupInstanceId ?? null;
+    if (it.kind === "path") {
+      const ln = lines.find((l) => l.id === it.lineId);
+      if (!ln) return;
+      const clone: any = JSON.parse(JSON.stringify(ln));
+      clone.id = makeId();
+      clone.name = (ln.name || "Path") + " Copy";
+      lines = [...lines, clone];
+      const newItem: any = { kind: "path", lineId: clone.id };
+      if (gid) newItem.groupInstanceId = gid;
+      const ns = [...sequence];
+      ns.splice(i + 1, 0, newItem);
+      sequence = ns;
+      syncLinesToSequence(ns);
+      ensureLineInDefaultChain(clone.id);
+      recordChange?.();
+    } else {
+      const newItem: any = {
+        kind: "wait",
+        id: makeId(),
+        name: it.name || "Wait",
+        durationMs: it.durationMs,
+      };
+      if (gid) newItem.groupInstanceId = gid;
+      const ns = [...sequence];
+      ns.splice(i + 1, 0, newItem);
+      sequence = ns;
+      recordChange?.();
+    }
+  }
+
+  function pasteAfter(i: number) {
+    const clip: any = $pathClipboard;
+    if (!clip) return;
+    const gid = (sequence[i] as any)?.groupInstanceId ?? null;
+    if (clip.kind === "group") {
+      materializeGroup(clip.group, i + 1, "");
+      return;
+    }
+    if (clip.kind === "path") {
+      const clone: any = JSON.parse(JSON.stringify(clip.line));
+      clone.id = makeId();
+      if (!clone.name) clone.name = `Path ${lines.length + 1}`;
+      lines = [...lines, clone];
+      const newItem: any = { kind: "path", lineId: clone.id };
+      if (gid) newItem.groupInstanceId = gid;
+      const ns = [...sequence];
+      ns.splice(i + 1, 0, newItem);
+      sequence = ns;
+      syncLinesToSequence(ns);
+      ensureLineInDefaultChain(clone.id);
+      recordChange?.();
+    } else if (clip.kind === "wait") {
+      const newItem: any = {
+        kind: "wait",
+        id: makeId(),
+        name: clip.name || "Wait",
+        durationMs: clip.durationMs ?? 0,
+      };
+      if (gid) newItem.groupInstanceId = gid;
+      const ns = [...sequence];
+      ns.splice(i + 1, 0, newItem);
+      sequence = ns;
+      recordChange?.();
+    }
+  }
+
+  function deleteIdx(i: number) {
+    const it: any = sequence[i];
+    if (it.kind === "path") {
+      const li = lines.findIndex((l) => l.id === it.lineId);
+      if (li >= 0) removeLine(li);
+    } else {
+      const ns = [...sequence];
+      ns.splice(i, 1);
+      sequence = ns;
+      recordChange?.();
+    }
+  }
+
+  // ---- Context menu ------------------------------------------------------
+  let ctxMenu: { x: number; y: number; entries: any[] } | null = null;
+
+  function onBubbleContextMenu(i: number, e: MouseEvent) {
+    e.preventDefault();
+    const key = seqKey(sequence[i]);
+    if (!selectedKeys.includes(key)) {
+      selectedKeys = [key];
+      lastClickedIdx = i;
+    }
+    const clip = $pathClipboard;
+    const entries: any[] = [
+      { label: "Copy", hint: "⌘C", onClick: () => copyIdx(i) },
+      { label: "Duplicate", hint: "⌘D", onClick: () => duplicateIdx(i) },
+      { label: "Paste after", hint: "⌘V", disabled: !clip, onClick: () => pasteAfter(i) },
+    ];
+    const n = selectedIndices().length;
+    if (n >= 1 && !selectionHasGrouped()) {
+      entries.push({ divider: true });
+      entries.push({
+        label: `Group ${n} selected…`,
+        onClick: groupSelected,
+      });
+    }
+    entries.push({ divider: true });
+    entries.push({ label: "Delete", danger: true, onClick: () => deleteIdx(i) });
+    ctxMenu = { x: e.clientX, y: e.clientY, entries };
+  }
+
+  function onGroupContextMenu(gid: string, e: MouseEvent) {
+    e.preventDefault();
+    const clip = $pathClipboard;
+    const memberIdxs = groupMemberIdxs(gid);
+    const lastIdx = memberIdxs[memberIdxs.length - 1] ?? sequence.length - 1;
+    ctxMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      entries: [
+        { label: "Copy group", onClick: () => copyGroupInstance(gid) },
+        { label: "Duplicate group", onClick: () => duplicateGroupInstance(gid) },
+        {
+          label: "Paste after",
+          disabled: !clip,
+          onClick: () => pasteAfter(lastIdx),
+        },
+        { divider: true },
+        { label: "Ungroup", onClick: () => ungroup(gid) },
+        {
+          label: "Delete group",
+          danger: true,
+          onClick: () => deleteGroupInstance(gid),
+        },
+      ],
+    };
+  }
+
+  onMount(() => {
+    const act = (fn: () => void) => (e: KeyboardEvent) => {
+      if (selectedIndices().length !== 1) return;
+      e.preventDefault();
+      fn();
+    };
+    hotkeys("ctrl+c,command+c", act(() => copyIdx(selectedIndices()[0])));
+    hotkeys("ctrl+d,command+d", act(() => duplicateIdx(selectedIndices()[0])));
+    hotkeys("ctrl+v,command+v", act(() => pasteAfter(selectedIndices()[0])));
+    hotkeys("escape", () => clearSelection());
+    return () => {
+      hotkeys.unbind("ctrl+c,command+c");
+      hotkeys.unbind("ctrl+d,command+d");
+      hotkeys.unbind("ctrl+v,command+v");
+      hotkeys.unbind("escape");
+    };
+  });
 </script>
 
 <div class="flex-1 flex flex-col justify-start items-center gap-2 h-full">
@@ -914,34 +1523,216 @@
       {/if}
     </div>
 
-    <PresetsSection bind:positions={savedPositions} bind:headings={savedHeadings} />
+    <PathGroupsSection
+      bind:groups={pathGroups}
+      onInsert={(gid) => insertGroupFromLibrary(gid, sequence.length)}
+      onGroupDragStart={(id) => (draggedLibGroupId = id)}
+      onGroupDragEnd={() => (draggedLibGroupId = null)}
+      {recordChange}
+    />
+
+    <PresetsSection
+      bind:positions={savedPositions}
+      bind:headings={savedHeadings}
+      onPresetDragStart={handlePresetDragStart}
+      onPresetDragEnd={handlePresetDragEnd}
+      onActivatePosition={appendPositionAsPath}
+      onActivateHeading={applyHeadingToLastPath}
+    />
+
+    {#if selectedKeys.length > 0}
+      <div
+        class="w-full flex items-center gap-2 rounded-md bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-3 py-1.5 text-xs shrink-0"
+      >
+        <span class="font-semibold text-blue-800 dark:text-blue-200"
+          >{selCount} selected</span
+        >
+        <button
+          type="button"
+          on:click={groupSelected}
+          disabled={selCount < 1 || selHasGrouped}
+          class="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-40"
+          title="Save the selected bubbles as a reusable group"
+        >
+          Group
+        </button>
+        <span class="text-blue-700/70 dark:text-blue-300/70 hidden sm:inline"
+          >right-click for more · ⌘C/⌘D/⌘V</span
+        >
+        <button
+          type="button"
+          on:click={clearSelection}
+          class="ml-auto px-2 py-1 rounded bg-white dark:bg-neutral-800 border border-blue-200 dark:border-blue-700"
+        >
+          Clear
+        </button>
+      </div>
+    {/if}
 
     <!-- Unified sequence render: draggable bubbles for paths and waits.
          Gap slots (fixed height, always present) sit between bubbles and
-         are the only valid drop targets, so hovering never resizes the
-         layout — only the gap's inner line toggles color. -->
-    {#each sequence as item, sIdx (item.kind === "path" ? item.lineId : item.id)}
-      <div
-        class="w-full h-4 relative z-10 shrink-0"
-        role="presentation"
-        on:dragover={(e) => handleGapDragOver(sIdx, e)}
-        on:dragleave={() => handleGapDragLeave(sIdx)}
-        on:drop={(e) => handleGapDrop(sIdx, e)}
-      >
+         are the only valid drop targets. Runs of items sharing a
+         groupInstanceId render under a collapsible group header. -->
+    {#each sequence as item, sIdx (seqKey(item))}
+      {@const gid = gidOf(item)}
+      {@const inst = gid ? groupInstById.get(gid) : null}
+      {@const firstOfGroup = !!gid && gidOf(sequence[sIdx - 1]) !== gid}
+      {@const hiddenMember = !!inst && inst.collapsed}
+
+      {#if firstOfGroup && inst}
+        {@const mCount = groupMemberIdxs(gid).length}
         <div
-          class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
-            sIdx && draggedSeqIndex !== null
-            ? 'bg-blue-400 dark:bg-blue-500'
-            : 'bg-transparent'}"
-        />
-      </div>
-      <div
-        class="w-full transition-opacity duration-150"
-        class:opacity-40={draggedSeqIndex === sIdx}
-      >
-        {#if item.kind === "path"}
-          {#each lines.filter((l) => l.id === item.lineId) as ln (ln.id)}
-            <PathLineSection
+          class="w-full h-4 relative z-10 shrink-0"
+          role="presentation"
+          on:dragover={(e) => handleGapDragOver(sIdx, e)}
+          on:dragleave={() => handleGapDragLeave(sIdx)}
+          on:drop={(e) => handleGapDrop(sIdx, e, null)}
+        >
+          <div
+            class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
+              sIdx && gapArmed
+              ? 'bg-blue-400 dark:bg-blue-500'
+              : 'bg-transparent'}"
+          />
+        </div>
+
+        <div
+          class="w-full transition-opacity duration-150"
+          class:opacity-40={draggedGroupId === gid}
+        >
+          <div
+            class="flex w-full items-center gap-2 px-2 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 shadow-sm"
+            role="presentation"
+            on:contextmenu={(e) => onGroupContextMenu(gid, e)}
+          >
+            <span
+              draggable="true"
+              on:dragstart={(e) => handleGroupDragStart(gid, e)}
+              on:dragend={handleGroupDragEnd}
+              title="Drag to move the whole group"
+              role="button"
+              tabindex="0"
+              aria-label="Drag group"
+              class="cursor-grab active:cursor-grabbing text-emerald-500 shrink-0 select-none"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+                <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+                <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+              </svg>
+            </span>
+            <button
+              type="button"
+              on:click={() => toggleGroupCollapsed(gid)}
+              title="{inst.collapsed ? 'Expand' : 'Collapse'} group"
+              class="shrink-0 text-emerald-700 dark:text-emerald-300"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width={2}
+                stroke="currentColor"
+                class="size-4 transition-transform {inst.collapsed ? 'rotate-0' : 'rotate-90'}"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+              </svg>
+            </button>
+            <span
+              class="px-1.5 py-0.5 text-[11px] rounded bg-emerald-200 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 shrink-0"
+              >Group</span
+            >
+            <input
+              class="pl-1.5 min-w-0 flex-1 rounded-md bg-white dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none text-sm font-semibold text-emerald-900 dark:text-emerald-100"
+              value={inst.name}
+              on:input={(e) => renameGroupInstanceLive(gid, e.currentTarget.value)}
+              on:change={recordChange}
+              placeholder="Group name"
+            />
+            <span class="text-[11px] text-emerald-700/70 dark:text-emerald-300/70 shrink-0"
+              >{mCount} item{mCount === 1 ? "" : "s"}</span
+            >
+            <button
+              type="button"
+              title="Group actions"
+              on:click={(e) => onGroupContextMenu(gid, e)}
+              class="shrink-0 text-emerald-600 dark:text-emerald-300"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                <circle cx="10" cy="4" r="1.6" /><circle cx="10" cy="10" r="1.6" /><circle cx="10" cy="16" r="1.6" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {#if !inst.collapsed}
+          <div
+            class="w-full h-4 relative z-10 shrink-0 pl-4"
+            role="presentation"
+            on:dragover={(e) => handleGapDragOver(sIdx, e)}
+            on:dragleave={() => handleGapDragLeave(sIdx)}
+            on:drop={(e) => handleGapDrop(sIdx, e, gid)}
+          >
+            <div
+              class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
+                sIdx && gapArmed
+                ? 'bg-emerald-400 dark:bg-emerald-500'
+                : 'bg-transparent'}"
+            />
+          </div>
+        {/if}
+      {/if}
+
+      {#if !hiddenMember}
+        {#if !gid}
+          <div
+            class="w-full h-4 relative z-10 shrink-0"
+            role="presentation"
+            on:dragover={(e) => handleGapDragOver(sIdx, e)}
+            on:dragleave={() => handleGapDragLeave(sIdx)}
+            on:drop={(e) => handleGapDrop(sIdx, e, null)}
+          >
+            <div
+              class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
+                sIdx && gapArmed
+                ? 'bg-blue-400 dark:bg-blue-500'
+                : 'bg-transparent'}"
+            />
+          </div>
+        {:else if !firstOfGroup}
+          <div
+            class="w-full h-4 relative z-10 shrink-0 pl-4"
+            role="presentation"
+            on:dragover={(e) => handleGapDragOver(sIdx, e)}
+            on:dragleave={() => handleGapDragLeave(sIdx)}
+            on:drop={(e) => handleGapDrop(sIdx, e, gid)}
+          >
+            <div
+              class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
+                sIdx && gapArmed
+                ? 'bg-emerald-400 dark:bg-emerald-500'
+                : 'bg-transparent'}"
+            />
+          </div>
+        {/if}
+
+        <div
+          class="w-full transition-opacity duration-150 {gid
+            ? 'pl-4 border-l-2 border-emerald-300 dark:border-emerald-700 ml-1'
+            : ''}"
+          class:opacity-40={draggedSeqIndex === sIdx}
+          role="presentation"
+          on:click={(e) => onBubbleClick(sIdx, e)}
+          on:contextmenu={(e) => onBubbleContextMenu(sIdx, e)}
+        >
+          <div
+            class={selectedKeySet.has(seqKey(item))
+              ? "rounded-2xl ring-2 ring-blue-400 dark:ring-blue-500"
+              : ""}
+          >
+            {#if item.kind === "path"}
+              {#each lines.filter((l) => l.id === item.lineId) as ln (ln.id)}
+                <PathLineSection
               bind:line={ln}
               idx={lines.findIndex((l) => l.id === ln.id)}
               bind:lines
@@ -963,6 +1754,11 @@
               onAddWaitAfter={() => insertWaitAfter(sIdx)}
               onDragStart={(e) => handleBubbleDragStart(sIdx, e)}
               onDragEnd={handleBubbleDragEnd}
+              draggingHeading={draggedPreset?.kind === "heading"}
+              onHeadingDrop={() => {
+                if (draggedPreset?.kind === "heading")
+                  applyHeadingToLine(ln.id ?? "", draggedPreset.id);
+              }}
               optimizeLine={optimizeLine}
               optimizing={optimizingLineIds?.[ln.id ?? ""] ?? false}
               chainOptions={chainOptions}
@@ -1014,8 +1810,10 @@
             onDragStart={(e) => handleBubbleDragStart(sIdx, e)}
             onDragEnd={handleBubbleDragEnd}
           />
-        {/if}
-      </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
     {/each}
 
     <!-- Trailing gap slot: dropping here places the bubble at the very end -->
@@ -1024,15 +1822,24 @@
       role="presentation"
       on:dragover={(e) => handleGapDragOver(sequence.length, e)}
       on:dragleave={() => handleGapDragLeave(sequence.length)}
-      on:drop={(e) => handleGapDrop(sequence.length, e)}
+      on:drop={(e) => handleGapDrop(sequence.length, e, null)}
     >
       <div
         class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
-          sequence.length && draggedSeqIndex !== null
+          sequence.length && gapArmed
           ? 'bg-blue-400 dark:bg-blue-500'
           : 'bg-transparent'}"
       />
     </div>
+
+    {#if ctxMenu}
+      <TimelineContextMenu
+        x={ctxMenu.x}
+        y={ctxMenu.y}
+        entries={ctxMenu.entries}
+        onClose={() => (ctxMenu = null)}
+      />
+    {/if}
 
     <!-- Add Line Button -->
     <div class="flex flex-row items-center gap-4">

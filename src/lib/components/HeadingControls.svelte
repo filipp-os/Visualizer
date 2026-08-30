@@ -36,6 +36,19 @@
 <select
   bind:value={endPoint.heading}
   on:change={() => {
+    // Carry a saved-heading / position-heading link across interpolation
+    // type changes: constant's `headingLink` <-> linear's `endHeadingLink`,
+    // moving the numeric value with it.
+    if (endPoint.heading === "linear" && endPoint.headingLink) {
+      endPoint.endHeadingLink = endPoint.headingLink;
+      if (endPoint.degrees !== undefined) endPoint.endDeg = endPoint.degrees;
+      endPoint.headingLink = undefined;
+    } else if (endPoint.heading === "constant" && endPoint.endHeadingLink) {
+      endPoint.headingLink = endPoint.endHeadingLink;
+      if (endPoint.endDeg !== undefined) endPoint.degrees = endPoint.endDeg;
+      endPoint.endHeadingLink = undefined;
+    }
+
     // Initialize missing properties based on the selected heading type
     if (endPoint.heading === "constant" && endPoint.degrees === undefined) {
       endPoint.degrees = 0;
@@ -48,6 +61,7 @@
       if (endPoint.reverse === undefined) endPoint.reverse = false;
     }
     dispatch("change");
+    dispatch("commit");
   }}
   class=" rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28 text-sm"
   title="The heading style of the robot. 
