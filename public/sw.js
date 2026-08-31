@@ -1,4 +1,4 @@
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE_NAME = `pedro-visualizer-${VERSION}`;
 
 const APP_STATIC_RESOURCES = [
@@ -18,6 +18,7 @@ const APP_STATIC_RESOURCES = [
 
 // On install, cache the static resources
 self.addEventListener("install", (event) => {
+  self.skipWaiting();
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
@@ -52,6 +53,21 @@ self.addEventListener("fetch", (event) => {
   //   event.respondWith(caches.match("/"));
   //   return;
   // }
+
+  const url = new URL(event.request.url);
+
+  // Never cache or intercept anything that isn't a plain GET, or that talks to
+  // the local export bridge / Vite's own endpoints — those must always hit the
+  // network so live state (bridge status, HMR, module graph) is never stale.
+  if (
+    event.request.method !== "GET" ||
+    url.pathname.startsWith("/__bridge/") ||
+    url.pathname.startsWith("/@") ||
+    url.pathname.startsWith("/node_modules/") ||
+    url.pathname.startsWith("/src/")
+  ) {
+    return; // fall through to the network with no SW involvement
+  }
 
   // For all other requests, go to the cache first, and then the network.
   event.respondWith(

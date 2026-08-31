@@ -1,0 +1,14 @@
+{
+  "//": "Copy this file to visualizer.export.json (git-ignored) and edit the paths.",
+  "//projectRoot": "Absolute path to your TeamCode Java SOURCE ROOT — the folder that directly contains 'org/'. On a stock FTC project that is .../TeamCode/src/main/java",
+  "projectRoot": "/absolute/path/to/FtcRobotController/TeamCode/src/main/java",
+
+  "//packages": "Where visualizer output goes, RELATIVE to projectRoot. Keep these separate from your hand-written code so you always know which classes came from the visualizer. The Java 'package' line in each generated file is derived from these paths.",
+  "packages": {
+    "paths": "org/firstinspires/ftc/teamcode/vis/paths",
+    "auto": "org/firstinspires/ftc/teamcode/vis/auto"
+  },
+
+  "//allowGit": "When true, the bridge reports the current git branch / dirty state in the export panel (read-only, it never commits for you).",
+  "allowGit": true
+}

@@ -16,6 +16,8 @@
     generateIvyPathsClass,
     generateIvyOpMode,
   } from "../../utils/ivyExporter";
+  import { ivyBanner } from "../../utils/exportBridge";
+  import ProjectExportPanel from "./ProjectExportPanel.svelte";
 
   export let isOpen = false;
   export let startPoint: Point;
@@ -50,6 +52,12 @@
     return base || "Auto";
   }
 
+  // For the generated-file banner + manifest: the real .pp name, or "" when
+  // the path hasn't been saved yet.
+  function bannerSource(): string {
+    return $currentFilePath ? fileBaseName() : "";
+  }
+
   async function regenerateIvy() {
     if (exportFormat === "ivy-paths") {
       exportedCode = await generateIvyPathsClass(
@@ -78,17 +86,68 @@
     }
   }
 
+  // Mirrors ivyExporter's `ident()` so the on-disk class name we compute here
+  // matches the `public class …` the generator actually emits.
+  function ivyIdent(base: string): string {
+    const c = (base || "Auto").replace(/[^a-zA-Z0-9]/g, "");
+    if (!c) return "Auto";
+    return /^[0-9]/.test(c) ? "Auto" + c : c;
+  }
+
+  // Regenerate IVY code for a specific package + base name without disturbing
+  // the on-screen preview. Returns the real on-disk class name + bannered file.
+  async function buildIvyArtifact(
+    base: string,
+    packageName: string,
+  ): Promise<{ className: string; code: string }> {
+    const cleanBase = ivyIdent(base);
+    if (exportFormat === "ivy-paths") {
+      const code = await generateIvyPathsClass(
+        startPoint,
+        lines,
+        sequence,
+        pathChains,
+        {
+          className: cleanBase,
+          packageName: packageName || undefined,
+          allianceMirror: ivyAllianceMirror,
+        },
+      );
+      return {
+        className: cleanBase + "Paths",
+        code: ivyBanner(bannerSource()) + code,
+      };
+    }
+    const code = await generateIvyOpMode(
+      startPoint,
+      lines,
+      sequence,
+      pathChains,
+      {
+        className: cleanBase,
+        packageName: packageName || undefined,
+        mirrorPoses: ivyMirrorPoses,
+      },
+    );
+    return { className: cleanBase, code: ivyBanner(bannerSource()) + code };
+  }
+
   function downloadCode() {
     let name = "export.txt";
     if (exportFormat === "ivy-paths")
-      name = `${(ivyClassName || "Auto").replace(/[^a-zA-Z0-9]/g, "") || "Auto"}Paths.java`;
+      name = `${ivyIdent(ivyClassName)}Paths.java`;
     else if (exportFormat === "ivy-opmode")
-      name = `${(ivyClassName || "Auto").replace(/[^a-zA-Z0-9]/g, "") || "Auto"}.java`;
+      name = `${ivyIdent(ivyClassName)}.java`;
     else if (exportFormat === "java") name = "PathExport.java";
     else if (exportFormat === "sequential")
       name = `${sequentialClassName || "AutoPath"}.java`;
     else if (exportFormat === "points") name = "points.txt";
-    const blob = new Blob([exportedCode || ""], { type: "text/plain" });
+    const isIvy =
+      exportFormat === "ivy-paths" || exportFormat === "ivy-opmode";
+    const payload = isIvy
+      ? ivyBanner(bannerSource()) + (exportedCode || "")
+      : exportedCode || "";
+    const blob = new Blob([payload], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -331,6 +390,15 @@
           </button>
         </div>
       </div>
+
+      {#if exportFormat === "ivy-paths" || exportFormat === "ivy-opmode"}
+        <ProjectExportPanel
+          kind={exportFormat}
+          baseName={ivyClassName}
+          source={bannerSource()}
+          build={buildIvyArtifact}
+        />
+      {/if}
 
       <div class="relative w-full flex-1 overflow-auto">
         <Highlight

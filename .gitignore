@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 .vercel
 ws_client.html
+
+# Local export bridge config (per-machine paths)
+visualizer.export.json
+
+# tsc --build declaration emitted from tsconfig.node.json
+/vite.config.d.ts
