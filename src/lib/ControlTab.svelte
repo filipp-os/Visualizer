@@ -721,14 +721,17 @@
   }
 
   function insertWaitAfter(seqIndex: number) {
-    const newSeq = [...sequence];
-    newSeq.splice(seqIndex + 1, 0, {
+    const gid = (sequence[seqIndex] as any)?.groupInstanceId ?? null;
+    const newItem: any = {
       kind: "wait",
       id: makeId(),
       name: "Wait",
       durationMs: 0,
       locked: false,
-    });
+    };
+    if (gid) newItem.groupInstanceId = gid;
+    const newSeq = [...sequence];
+    newSeq.splice(seqIndex + 1, 0, newItem);
     sequence = newSeq;
   }
 
@@ -753,9 +756,13 @@
     // Add the new line to the lines array
     lines = [...lines, newLine];
 
-    // Insert the new path in the sequence after the wait
+    // Insert the new path in the sequence after the wait, keeping it in the
+    // same group as the item it follows.
+    const gid = (sequence[seqIndex] as any)?.groupInstanceId ?? null;
+    const newItem: any = { kind: "path", lineId: newLine.id! };
+    if (gid) newItem.groupInstanceId = gid;
     const newSeq = [...sequence];
-    newSeq.splice(seqIndex + 1, 0, { kind: "path", lineId: newLine.id! });
+    newSeq.splice(seqIndex + 1, 0, newItem);
     sequence = newSeq;
     ensureLineInDefaultChain(newLine.id!);
 
@@ -860,15 +867,28 @@
     recordChange?.();
   }
 
-  // Move every member of a group as one contiguous block to `gapIndex`.
-  function moveGroupBlock(gid: string, gapIndex: number) {
-    const memberIdxs = groupMemberIdxs(gid);
-    if (!memberIdxs.length) return;
-    const block = memberIdxs.map((i) => sequence[i]);
-    const rest = sequence.filter((it: any) => it.groupInstanceId !== gid);
-    const removedBefore = memberIdxs.filter((i) => i < gapIndex).length;
+  // Move a group's whole subtree as one contiguous block to `gapIndex`.
+  // `newParentId` re-nests it (string) / lifts it to top level (null).
+  function moveGroupBlock(
+    gid: string,
+    gapIndex: number,
+    newParentId: string | null | undefined = undefined,
+  ) {
+    const idxs = subtreeMemberIdxs(gid);
+    if (!idxs.length) return;
+    if (newParentId === gid || chainIdsOf(newParentId ?? undefined).includes(gid))
+      return; // can't drop a group inside itself
+    const idxSet = new Set(idxs);
+    const block = idxs.map((i) => sequence[i]);
+    const rest = sequence.filter((_: any, i) => !idxSet.has(i));
+    const removedBefore = idxs.filter((i) => i < gapIndex).length;
     const insertAt = Math.max(0, Math.min(gapIndex - removedBefore, rest.length));
     sequence = [...rest.slice(0, insertAt), ...block, ...rest.slice(insertAt)];
+    if (newParentId !== undefined) {
+      groupInstances = groupInstances.map((g: any) =>
+        g.id === gid ? { ...g, parentId: newParentId || undefined } : g,
+      );
+    }
     syncLinesToSequence(sequence);
     recordChange?.();
   }
@@ -936,7 +956,8 @@
   ) {
     e.preventDefault();
     if (draggedGroupId !== null) {
-      moveGroupBlock(draggedGroupId, gapIndex);
+      // Re-nest under the gap's group context (null = lift to top level).
+      moveGroupBlock(draggedGroupId, gapIndex, groupId);
     } else if (draggedSeqIndex !== null) {
       // Dropping into the gap "before item[gapIndex]" means the final
       // resting index is gapIndex, UNLESS the dragged item currently sits
@@ -951,7 +972,8 @@
       const posId = e.dataTransfer?.getData("application/x-pp-position");
       const grpId = e.dataTransfer?.getData("application/x-pp-group");
       if (posId) insertPositionAsPath(posId, gapIndex, groupId);
-      else if (grpId) insertGroupFromLibrary(grpId, gapIndex);
+      else if (grpId)
+        insertGroupFromLibrary(grpId, gapIndex, groupId ?? undefined);
     }
     draggedSeqIndex = null;
     dragOverGap = null;
@@ -1104,22 +1126,68 @@
 
   const gidOf = (it: any): string | undefined => it?.groupInstanceId;
 
-  function groupMemberIdxs(gid: string): number[] {
+  // [outermost … innermost] chain of instance objects for an item's innermost
+  // groupInstanceId, walking `parentId`. Empty for top-level items.
+  function chainOf(gid: string | undefined): any[] {
+    const out: any[] = [];
+    const seen = new Set<string>();
+    let cur = gid ? groupInstById.get(gid) : null;
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      out.unshift(cur);
+      cur = cur.parentId ? groupInstById.get(cur.parentId) : null;
+    }
+    return out;
+  }
+  const chainIdsOf = (gid: string | undefined): string[] =>
+    chainOf(gid).map((c) => c.id);
+
+  // Index of the first collapsed instance in a chain (everything from there
+  // inward is hidden); chain.length when nothing in the chain is collapsed.
+  function firstCollapsedIdx(chain: any[]): number {
+    for (let k = 0; k < chain.length; k++) if (chain[k].collapsed) return k;
+    return chain.length;
+  }
+
+  // Every sequence index whose chain contains `gid` (gid itself or a
+  // descendant group) — i.e. the whole subtree of a group.
+  function subtreeMemberIdxs(gid: string): number[] {
     const out: number[] = [];
     sequence.forEach((it: any, i) => {
-      if (it.groupInstanceId === gid) out.push(i);
+      if (chainIdsOf(it.groupInstanceId).includes(gid)) out.push(i);
     });
     return out;
   }
 
-  // Drop stray group instances whose members were all removed / ungrouped.
+  // Prune group instances that hold nothing, and repair orphaned parentId
+  // links (parent deleted -> promote a level). Nesting-aware: a parent
+  // instance stays "live" as long as one of its descendants is.
   $: {
-    const live = new Set(
+    const direct = new Set(
       sequence.map((it: any) => it.groupInstanceId).filter(Boolean),
     );
-    if ((groupInstances || []).some((g: any) => !live.has(g.id))) {
-      groupInstances = groupInstances.filter((g: any) => live.has(g.id));
+    const liveIds = new Set(direct);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      (groupInstances || []).forEach((g: any) => {
+        if (liveIds.has(g.id) && g.parentId && !liveIds.has(g.parentId)) {
+          liveIds.add(g.parentId);
+          changed = true;
+        }
+      });
     }
+    let next = groupInstances || [];
+    if (next.some((g: any) => !liveIds.has(g.id))) {
+      next = next.filter((g: any) => liveIds.has(g.id));
+    }
+    const kept = new Set(next.map((g: any) => g.id));
+    if (next.some((g: any) => g.parentId && !kept.has(g.parentId))) {
+      next = next.map((g: any) =>
+        g.parentId && !kept.has(g.parentId) ? { ...g, parentId: undefined } : g,
+      );
+    }
+    if (next !== groupInstances) groupInstances = next;
   }
 
   function toggleGroupCollapsed(gid: string) {
@@ -1133,33 +1201,69 @@
     );
   }
 
-  // Build reusable library-group items from a run of sequence entries.
-  function snapshotItems(idxs: number[]) {
+  // Build reusable library items from a sequence range, one level below
+  // `parentGid` — sub-groups become nested { kind: "group", items } entries.
+  function snapshotRange(
+    lo: number,
+    hi: number,
+    parentGid: string | undefined,
+  ): any[] {
     const items: any[] = [];
-    idxs.forEach((i) => {
+    let i = lo;
+    while (i <= hi) {
       const it: any = sequence[i];
-      if (it.kind === "path") {
-        const ln = lines.find((l) => l.id === it.lineId);
-        if (ln) items.push({ kind: "path", line: JSON.parse(JSON.stringify(ln)) });
-      } else {
+      const chain = chainIdsOf(it.groupInstanceId);
+      const parentDepth = parentGid ? chain.indexOf(parentGid) + 1 : 0;
+      if (chain.length > parentDepth) {
+        // Belongs to a sub-group one level below parentGid → recurse.
+        const sub = chain[parentDepth];
+        const subIdxs = subtreeMemberIdxs(sub);
+        const jEnd = Math.min(subIdxs[subIdxs.length - 1], hi);
+        const inst: any = groupInstById.get(sub);
         items.push({
-          kind: "wait",
-          name: it.name,
-          durationMs: it.durationMs,
+          kind: "group",
+          name: inst?.name || "Group",
+          items: snapshotRange(subIdxs[0], jEnd, sub),
         });
+        i = jEnd + 1;
+      } else if (it.kind === "path") {
+        const ln = lines.find((l) => l.id === it.lineId);
+        if (ln)
+          items.push({ kind: "path", line: JSON.parse(JSON.stringify(ln)) });
+        i++;
+      } else {
+        items.push({ kind: "wait", name: it.name, durationMs: it.durationMs });
+        i++;
       }
-    });
+    }
     return items;
   }
 
-  // Turn a { name, items } group definition into real lines + sequence items,
-  // spliced in at `seqIndex`, wrapped in a fresh (collapsed) group instance.
-  function materializeGroup(src: any, seqIndex: number, groupId: string) {
+  // Recursively expand a { name, items } group definition into fresh lines,
+  // sequence items and (nested) group instances.
+  function buildGroupTree(
+    src: any,
+    parentId: string | undefined,
+  ): { newLines: Line[]; newItems: any[]; newInstances: any[] } {
     const instId = makeId();
     const newLines: Line[] = [];
     const newItems: any[] = [];
+    const newInstances: any[] = [
+      {
+        id: instId,
+        groupId: src.groupId || "",
+        name: src.name,
+        collapsed: true,
+        parentId: parentId || undefined,
+      },
+    ];
     (src.items || []).forEach((it: any) => {
-      if (it.kind === "path") {
+      if (it.kind === "group") {
+        const child = buildGroupTree(it, instId);
+        newLines.push(...child.newLines);
+        newItems.push(...child.newItems);
+        newInstances.push(...child.newInstances);
+      } else if (it.kind === "path") {
         const clone = JSON.parse(JSON.stringify(it.line)) as Line;
         clone.id = makeId();
         newLines.push(clone);
@@ -1178,72 +1282,105 @@
         });
       }
     });
+    return { newLines, newItems, newInstances };
+  }
 
-    lines = [...lines, ...newLines];
+  // Splice a materialised group into the sequence at `seqIndex`, nested under
+  // `parentId` when provided.
+  function materializeGroup(
+    src: any,
+    seqIndex: number,
+    parentId: string | undefined = undefined,
+  ) {
+    const built = buildGroupTree(src, parentId);
+    lines = [...lines, ...built.newLines];
     const clamped = Math.max(0, Math.min(seqIndex, sequence.length));
     const newSeq = [...sequence];
-    newSeq.splice(clamped, 0, ...newItems);
+    newSeq.splice(clamped, 0, ...built.newItems);
     sequence = newSeq;
-    groupInstances = [
-      ...groupInstances,
-      { id: instId, groupId: groupId || "", name: src.name, collapsed: true },
-    ];
+    groupInstances = [...groupInstances, ...built.newInstances];
     syncLinesToSequence(newSeq);
-    newLines.forEach((l) => l.id && ensureLineInDefaultChain(l.id));
+    built.newLines.forEach((l) => l.id && ensureLineInDefaultChain(l.id));
     recordChange?.();
   }
 
-  function insertGroupFromLibrary(groupId: string, seqIndex: number) {
+  function insertGroupFromLibrary(
+    groupId: string,
+    seqIndex: number,
+    parentId: string | undefined = undefined,
+  ) {
     const g = (pathGroups || []).find((x: any) => x.id === groupId);
     if (!g) return;
-    materializeGroup(g, seqIndex, groupId);
+    materializeGroup({ ...g, groupId }, seqIndex, parentId);
   }
 
   function ungroup(gid: string) {
+    const inst: any = groupInstById.get(gid);
+    const parentId: string | undefined = inst?.parentId || undefined;
     sequence = sequence.map((it: any) => {
       if (it.groupInstanceId !== gid) return it;
       const { groupInstanceId, ...rest } = it;
-      return rest;
+      return parentId ? { ...rest, groupInstanceId: parentId } : rest;
     });
-    groupInstances = groupInstances.filter((g: any) => g.id !== gid);
+    groupInstances = groupInstances
+      .filter((g: any) => g.id !== gid)
+      .map((g: any) => (g.parentId === gid ? { ...g, parentId } : g));
     recordChange?.();
   }
 
   function deleteGroupInstance(gid: string) {
-    const memberIdxs = groupMemberIdxs(gid);
+    // Kill gid and every descendant instance.
+    const kill = new Set<string>([gid]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      groupInstances.forEach((g: any) => {
+        if (g.parentId && kill.has(g.parentId) && !kill.has(g.id)) {
+          kill.add(g.id);
+          changed = true;
+        }
+      });
+    }
     const lineIds = new Set(
-      memberIdxs
-        .map((i) => sequence[i])
-        .filter((it: any) => it.kind === "path")
+      sequence
+        .filter(
+          (it: any) => it.kind === "path" && kill.has(it.groupInstanceId),
+        )
         .map((it: any) => it.lineId),
     );
-    sequence = sequence.filter((it: any) => it.groupInstanceId !== gid);
+    sequence = sequence.filter((it: any) => !kill.has(it.groupInstanceId));
     lines = lines.filter((l) => !lineIds.has(l.id));
     lineIds.forEach((id) => removeLineFromChains(id as string));
-    groupInstances = groupInstances.filter((g: any) => g.id !== gid);
+    groupInstances = groupInstances.filter((g: any) => !kill.has(g.id));
     syncLinesToSequence(sequence);
     recordChange?.();
   }
 
   function copyGroupInstance(gid: string) {
     const inst: any = groupInstById.get(gid);
+    const idxs = subtreeMemberIdxs(gid);
+    if (!idxs.length) return;
     pathClipboard.set({
       kind: "group",
       group: {
         name: inst?.name || "Group",
-        items: snapshotItems(groupMemberIdxs(gid)),
+        items: snapshotRange(idxs[0], idxs[idxs.length - 1], gid),
       },
     });
   }
 
   function duplicateGroupInstance(gid: string) {
     const inst: any = groupInstById.get(gid);
-    const memberIdxs = groupMemberIdxs(gid);
-    const after = (memberIdxs[memberIdxs.length - 1] ?? -1) + 1;
+    const idxs = subtreeMemberIdxs(gid);
+    if (!idxs.length) return;
     materializeGroup(
-      { name: (inst?.name || "Group") + " Copy", items: snapshotItems(memberIdxs) },
-      after,
-      inst?.groupId || "",
+      {
+        name: (inst?.name || "Group") + " Copy",
+        groupId: inst?.groupId || "",
+        items: snapshotRange(idxs[0], idxs[idxs.length - 1], gid),
+      },
+      idxs[idxs.length - 1] + 1,
+      inst?.parentId || undefined,
     );
   }
 
@@ -1302,38 +1439,82 @@
   }
 
   // ---- Group the current selection into a new named group -----------------
+  // Nesting-aware: the selection may already sit inside a group — the new
+  // group is created one level deeper, under that common parent.
   function groupSelected() {
     const idxs = selectedIndices();
     if (idxs.length < 1) return;
     const lo = Math.min(...idxs);
     const hi = Math.max(...idxs);
+
+    // Deepest common ancestor group of the whole span (undefined = top level).
+    const chains = [];
+    for (let i = lo; i <= hi; i++) chains.push(chainIdsOf(gidOf(sequence[i])));
+    let common = chains[0] ?? [];
+    for (const c of chains) {
+      let k = 0;
+      while (k < common.length && k < c.length && common[k] === c[k]) k++;
+      common = common.slice(0, k);
+    }
+    const parentGid: string | undefined = common[common.length - 1];
+
+    // Every span item must sit exactly one level below parentGid: a direct
+    // member, or a sub-group whose whole subtree is inside the span.
     for (let i = lo; i <= hi; i++) {
-      if ((sequence[i] as any).groupInstanceId) {
-        alert("Some of the selected bubbles are already in a group.");
+      const c = chainIdsOf(gidOf(sequence[i]));
+      if (c.length === common.length) continue; // direct member of parentGid
+      const sub = c[common.length];
+      if ((groupInstById.get(sub)?.parentId || undefined) !== parentGid) {
+        alert("Select bubbles that are all at the same level to group them.");
+        return;
+      }
+      const subIdxs = subtreeMemberIdxs(sub);
+      if (subIdxs[0] < lo || subIdxs[subIdxs.length - 1] > hi) {
+        alert(
+          "A group can't be split — select all of a sub-group's bubbles or none.",
+        );
         return;
       }
     }
+
     const suggested = `Group ${(pathGroups?.length ?? 0) + 1}`;
     const name = prompt("Name this path group:", suggested);
     if (name === null) return;
     const finalName = name.trim() || suggested;
 
-    const span: number[] = [];
-    for (let i = lo; i <= hi; i++) span.push(i);
-
     const groupId = makeId();
     const instId = makeId();
     pathGroups = [
       ...pathGroups,
-      { id: groupId, name: finalName, items: snapshotItems(span) },
+      { id: groupId, name: finalName, items: snapshotRange(lo, hi, parentGid) },
     ];
     groupInstances = [
       ...groupInstances,
-      { id: instId, groupId, name: finalName, collapsed: true },
+      {
+        id: instId,
+        groupId,
+        name: finalName,
+        collapsed: true,
+        parentId: parentGid,
+      },
     ];
+    // Direct members of parentGid within the span descend into the new group;
+    // sub-groups directly under parentGid within the span get re-parented.
     sequence = sequence.map((it: any, i) =>
-      i >= lo && i <= hi ? { ...it, groupInstanceId: instId } : it,
+      i >= lo &&
+      i <= hi &&
+      (it.groupInstanceId || undefined) === parentGid
+        ? { ...it, groupInstanceId: instId }
+        : it,
     );
+    groupInstances = groupInstances.map((g: any) => {
+      if (g.id === instId) return g;
+      if ((g.parentId || undefined) !== parentGid) return g;
+      const s = subtreeMemberIdxs(g.id);
+      return s.length && s[0] >= lo && s[s.length - 1] <= hi
+        ? { ...g, parentId: instId }
+        : g;
+    });
     clearSelection();
     recordChange?.();
   }
@@ -1455,7 +1636,7 @@
       { label: "Paste after", hint: "⌘V", disabled: !clip, onClick: () => pasteAfter(i) },
     ];
     const n = selectedIndices().length;
-    if (n >= 1 && !selectionHasGrouped()) {
+    if (n >= 1) {
       entries.push({ divider: true });
       entries.push({
         label: `Group ${n} selected…`,
@@ -1470,7 +1651,7 @@
   function onGroupContextMenu(gid: string, e: MouseEvent) {
     e.preventDefault();
     const clip = $pathClipboard;
-    const memberIdxs = groupMemberIdxs(gid);
+    const memberIdxs = subtreeMemberIdxs(gid);
     const lastIdx = memberIdxs[memberIdxs.length - 1] ?? sequence.length - 1;
     ctxMenu = {
       x: e.clientX,
@@ -1598,9 +1779,9 @@
         <button
           type="button"
           on:click={groupSelected}
-          disabled={selCount < 1 || selHasGrouped}
+          disabled={selCount < 1}
           class="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-40"
-          title="Save the selected bubbles as a reusable group"
+          title="Group the selected bubbles (nests when they're already inside a group)"
         >
           Group
         </button>
@@ -1624,19 +1805,35 @@
          wrapper has no `gap` so the bubbles sit close together. -->
     <div class="w-full flex flex-col">
     {#each sequence as item, sIdx (seqKey(item))}
-      {@const gid = gidOf(item)}
-      {@const inst = gid ? groupInstById.get(gid) : null}
-      {@const firstOfGroup = !!gid && gidOf(sequence[sIdx - 1]) !== gid}
-      {@const hiddenMember = !!inst && inst.collapsed}
+      <!-- `groupInstById &&` makes Svelte re-run these when a group's
+           collapsed / parent / name state changes (chainOf reads it). -->
+      {@const chain = groupInstById && chainOf(gidOf(item))}
+      {@const prevChainIds =
+        groupInstById && chainIdsOf(gidOf(sequence[sIdx - 1]))}
+      {@const fc = firstCollapsedIdx(chain)}
+      {@const openings = chain.filter(
+        (c, k) => k <= fc && !prevChainIds.includes(c.id),
+      )}
+      {@const itemVisible = fc >= chain.length}
+      {@const innerDepth =
+        openings.length
+          ? chain.findIndex((c) => c.id === openings[openings.length - 1].id)
+          : -1}
+      {@const openInnerGap =
+        openings.length > 0 &&
+        innerDepth === chain.length - 1 &&
+        !openings[openings.length - 1].collapsed}
 
-      {#if firstOfGroup && inst}
-        {@const mCount = groupMemberIdxs(gid).length}
+      {#if openings.length}
+        {@const outerDepth = chain.findIndex((c) => c.id === openings[0].id)}
+        <!-- gap before the (outermost) group opening here -->
         <div
           class="w-full h-3 relative z-10 shrink-0"
+          style="padding-left: {outerDepth * 14}px"
           role="presentation"
           on:dragover={(e) => handleGapDragOver(sIdx, e)}
           on:dragleave={() => handleGapDragLeave(sIdx)}
-          on:drop={(e) => handleGapDrop(sIdx, e, null)}
+          on:drop={(e) => handleGapDrop(sIdx, e, openings[0].parentId ?? null)}
         >
           <div
             class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
@@ -1646,130 +1843,128 @@
           />
         </div>
 
-        <div
-          class="w-full transition-opacity duration-150"
-          class:opacity-40={draggedGroupId === gid}
-        >
+        {#each openings as oInst (oInst.id)}
+          {@const oDepth = chain.findIndex((c) => c.id === oInst.id)}
+          {@const oCount = subtreeMemberIdxs(oInst.id).length}
           <div
-            class="flex w-full items-center gap-2 px-2 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 shadow-sm"
-            role="presentation"
-            on:contextmenu={(e) => onGroupContextMenu(gid, e)}
-          >
-            <span
-              draggable="true"
-              on:dragstart={(e) => handleGroupDragStart(gid, e)}
-              on:dragend={handleGroupDragEnd}
-              title="Drag to move the whole group"
-              role="button"
-              tabindex="0"
-              aria-label="Drag group"
-              class="cursor-grab active:cursor-grabbing text-emerald-500 shrink-0 select-none"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
-                <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
-                <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
-                <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
-              </svg>
-            </span>
-            <button
-              type="button"
-              on:click={() => toggleGroupCollapsed(gid)}
-              title="{inst.collapsed ? 'Expand' : 'Collapse'} group"
-              class="shrink-0 text-emerald-700 dark:text-emerald-300"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke-width={2}
-                stroke="currentColor"
-                class="size-4 transition-transform {inst.collapsed ? 'rotate-0' : 'rotate-90'}"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-              </svg>
-            </button>
-            <span
-              class="px-1.5 py-0.5 text-[11px] rounded bg-emerald-200 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 shrink-0"
-              >Group</span
-            >
-            <input
-              class="pl-1.5 min-w-0 flex-1 rounded-md bg-white dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none text-sm font-semibold text-emerald-900 dark:text-emerald-100"
-              value={inst.name}
-              on:input={(e) => renameGroupInstanceLive(gid, e.currentTarget.value)}
-              on:change={recordChange}
-              placeholder="Group name"
-            />
-            <span class="text-[11px] text-emerald-700/70 dark:text-emerald-300/70 shrink-0"
-              >{mCount} item{mCount === 1 ? "" : "s"}</span
-            >
-            <button
-              type="button"
-              title="Group actions"
-              on:click={(e) => onGroupContextMenu(gid, e)}
-              class="shrink-0 text-emerald-600 dark:text-emerald-300"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
-                <circle cx="10" cy="4" r="1.6" /><circle cx="10" cy="10" r="1.6" /><circle cx="10" cy="16" r="1.6" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {#if !inst.collapsed}
-          <div
-            class="w-full h-3 relative z-10 shrink-0 pl-4"
-            role="presentation"
-            on:dragover={(e) => handleGapDragOver(sIdx, e)}
-            on:dragleave={() => handleGapDragLeave(sIdx)}
-            on:drop={(e) => handleGapDrop(sIdx, e, gid)}
+            class="w-full transition-opacity duration-150"
+            class:opacity-40={draggedGroupId === oInst.id}
+            style="padding-left: {oDepth * 14}px"
           >
             <div
-              class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
-                sIdx && gapArmed
-                ? 'bg-emerald-400 dark:bg-emerald-500'
-                : 'bg-transparent'}"
-            />
+              class="flex w-full items-center gap-2 px-2 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 shadow-sm"
+              role="presentation"
+              on:contextmenu={(e) => onGroupContextMenu(oInst.id, e)}
+            >
+              <span
+                draggable="true"
+                on:dragstart={(e) => handleGroupDragStart(oInst.id, e)}
+                on:dragend={handleGroupDragEnd}
+                title="Drag to move / re-nest the whole group"
+                role="button"
+                tabindex="0"
+                aria-label="Drag group"
+                class="cursor-grab active:cursor-grabbing text-emerald-500 shrink-0 select-none"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                  <circle cx="6" cy="5" r="1.4" /><circle cx="14" cy="5" r="1.4" />
+                  <circle cx="6" cy="10" r="1.4" /><circle cx="14" cy="10" r="1.4" />
+                  <circle cx="6" cy="15" r="1.4" /><circle cx="14" cy="15" r="1.4" />
+                </svg>
+              </span>
+              <button
+                type="button"
+                on:click={() => toggleGroupCollapsed(oInst.id)}
+                title="{oInst.collapsed ? 'Expand' : 'Collapse'} group"
+                class="shrink-0 text-emerald-700 dark:text-emerald-300"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width={2}
+                  stroke="currentColor"
+                  class="size-4 transition-transform {oInst.collapsed ? 'rotate-0' : 'rotate-90'}"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                </svg>
+              </button>
+              <span
+                class="px-1.5 py-0.5 text-[11px] rounded bg-emerald-200 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 shrink-0"
+                >Group</span
+              >
+              <input
+                class="pl-1.5 min-w-0 flex-1 rounded-md bg-white dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none text-sm font-semibold text-emerald-900 dark:text-emerald-100"
+                value={oInst.name}
+                on:input={(e) => renameGroupInstanceLive(oInst.id, e.currentTarget.value)}
+                on:change={recordChange}
+                placeholder="Group name"
+              />
+              <span class="text-[11px] text-emerald-700/70 dark:text-emerald-300/70 shrink-0"
+                >{oCount} item{oCount === 1 ? "" : "s"}</span
+              >
+              <button
+                type="button"
+                title="Group actions"
+                on:click={(e) => onGroupContextMenu(oInst.id, e)}
+                class="shrink-0 text-emerald-600 dark:text-emerald-300"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+                  <circle cx="10" cy="4" r="1.6" /><circle cx="10" cy="10" r="1.6" /><circle cx="10" cy="16" r="1.6" />
+                </svg>
+              </button>
+            </div>
           </div>
-        {/if}
+        {/each}
       {/if}
 
-      {#if !hiddenMember}
-        {#if !gid}
+      {#if openInnerGap}
+        <!-- gap inside the just-opened group, before its first bubble -->
+        <div
+          class="w-full h-3 relative z-10 shrink-0"
+          style="padding-left: {(innerDepth + 1) * 14}px"
+          role="presentation"
+          on:dragover={(e) => handleGapDragOver(sIdx, e)}
+          on:dragleave={() => handleGapDragLeave(sIdx)}
+          on:drop={(e) =>
+            handleGapDrop(sIdx, e, openings[openings.length - 1].id)}
+        >
+          <div
+            class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
+              sIdx && gapArmed
+              ? 'bg-emerald-400 dark:bg-emerald-500'
+              : 'bg-transparent'}"
+          />
+        </div>
+      {/if}
+
+      {#if itemVisible}
+        {#if !openings.length}
+          {@const ctxId = chain.length ? chain[chain.length - 1].id : null}
           <div
             class="w-full h-3 relative z-10 shrink-0"
+            style="padding-left: {chain.length * 14}px"
             role="presentation"
             on:dragover={(e) => handleGapDragOver(sIdx, e)}
             on:dragleave={() => handleGapDragLeave(sIdx)}
-            on:drop={(e) => handleGapDrop(sIdx, e, null)}
+            on:drop={(e) => handleGapDrop(sIdx, e, ctxId)}
           >
             <div
               class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
                 sIdx && gapArmed
-                ? 'bg-blue-400 dark:bg-blue-500'
-                : 'bg-transparent'}"
-            />
-          </div>
-        {:else if !firstOfGroup}
-          <div
-            class="w-full h-3 relative z-10 shrink-0 pl-4"
-            role="presentation"
-            on:dragover={(e) => handleGapDragOver(sIdx, e)}
-            on:dragleave={() => handleGapDragLeave(sIdx)}
-            on:drop={(e) => handleGapDrop(sIdx, e, gid)}
-          >
-            <div
-              class="absolute inset-x-1 top-1/2 -translate-y-1/2 h-1 rounded-full pointer-events-none transition-colors duration-100 {dragOverGap ===
-                sIdx && gapArmed
-                ? 'bg-emerald-400 dark:bg-emerald-500'
+                ? chain.length
+                  ? 'bg-emerald-400 dark:bg-emerald-500'
+                  : 'bg-blue-400 dark:bg-blue-500'
                 : 'bg-transparent'}"
             />
           </div>
         {/if}
 
         <div
-          class="w-full transition-opacity duration-150 {gid
-            ? 'pl-4 border-l-2 border-emerald-300 dark:border-emerald-700 ml-1'
+          class="w-full transition-opacity duration-150 {chain.length
+            ? 'border-l-2 border-emerald-300 dark:border-emerald-700'
             : ''}"
+          style="padding-left: {chain.length * 14}px"
           class:opacity-40={draggedSeqIndex === sIdx}
           role="presentation"
           on:click={(e) => onBubbleClick(sIdx, e)}
@@ -1850,17 +2045,7 @@
               newSeq.splice(sIdx, 1);
               sequence = newSeq;
             }}
-            onInsertAfter={() => {
-              const newSeq = [...sequence];
-              newSeq.splice(sIdx + 1, 0, {
-                kind: "wait",
-                id: makeId(),
-                name: "Wait",
-                durationMs: 0,
-                locked: false,
-              });
-              sequence = newSeq;
-            }}
+            onInsertAfter={() => insertWaitAfter(sIdx)}
             onAddPathAfter={() => insertPathAfter(sIdx)}
             onDragStart={(e) => handleBubbleDragStart(sIdx, e)}
             onDragEnd={handleBubbleDragEnd}

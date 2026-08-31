@@ -27,6 +27,10 @@
   export let secondLines: Line[] = [];
   export let secondShapes: Shape[] = [];
   export let secondSequence: SequenceItem[] = [];
+  // App-owned loader: restores the full project (incl. saved positions/
+  // headings and path groups) from a parsed .pp object. When absent, the
+  // local fallback below is used.
+  export let onLoadData: ((data: any) => void) | null = null;
 
   let files: FileInfo[] = [];
   let selectedFile2: FileInfo | null = null;
@@ -243,13 +247,17 @@
         throw new Error("Invalid file format: missing required fields");
       }
 
-      // Update the application state
-      startPoint = data.startPoint;
-      const normalizedLines = normalizeLines(data.lines || []);
-      lines = normalizedLines;
-      shapes = data.shapes || [];
-      sequence = deriveSequence(data, normalizedLines);
-      pathChains = data.pathChains || [];
+      if (onLoadData) {
+        onLoadData(data);
+      } else {
+        // Fallback (App didn't supply a loader)
+        startPoint = data.startPoint;
+        const normalizedLines = normalizeLines(data.lines || []);
+        lines = normalizedLines;
+        shapes = data.shapes || [];
+        sequence = deriveSequence(data, normalizedLines);
+        pathChains = data.pathChains || [];
+      }
 
       // Update Global Store State
       currentFilePath.set(file.path);

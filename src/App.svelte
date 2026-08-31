@@ -523,7 +523,7 @@
     let _points = [];
     
     // Only show main path points when NOT in multi-path mode
-    if ($activePaths.length === 0) {
+    if ($activePaths.length === 0 && lines.length > 0) {
       let startPointElem = new Two.Circle(
         x(startPoint.x),
         y(startPoint.y),
@@ -2705,45 +2705,10 @@
 
     // Parse and load the uploaded file, then cache it into the browser store.
     loadTrajectoryFromFile(evt, async (data) => {
-      // Ensure startPoint has all required fields
-      startPoint = data.startPoint || {
-        x: 72,
-        y: 72,
-        heading: "tangential",
-        reverse: false,
-      };
-
-      // Normalize lines with all required fields
-      const normalizedLines = normalizeLines(data.lines || []);
-      lines = normalizedLines;
-
-      // Derive sequence from data or create default
-      sequence = (
-        data.sequence && data.sequence.length
-          ? data.sequence
-          : normalizedLines.map((ln) => ({
-              kind: "path",
-              lineId: ln.id!,
-            }))
-      ) as SequenceItem[];
-      pathChains = normalizePathChains(data.pathChains, normalizedLines);
-      pathGroups = Array.isArray(data.pathGroups) ? data.pathGroups : [];
-      groupInstances = Array.isArray(data.groupInstances)
-        ? data.groupInstances
-        : [];
-
-      // Load shapes with defaults
-      shapes = data.shapes || [];
-
-      // Load settings (including robot size) if present
-      if (data.settings) {
-        settings = { ...settings, ...data.settings };
-        robotWidth = settings.rWidth;
-        robotHeight = settings.rHeight;
-      }
-
-      isUnsaved.set(false);
-      recordChange();
+      // Single source of truth for restoring project state (start point,
+      // lines, sequence, chains, shapes, saved positions/headings, path
+      // groups, settings).
+      loadData(data);
 
       // Cache the uploaded file into the browser-backed store for later access
       try {
@@ -3247,6 +3212,7 @@
   bind:shapes
   bind:sequence
   bind:pathChains
+  onLoadData={loadData}
   bind:secondStartPoint
   bind:secondLines
   bind:secondShapes

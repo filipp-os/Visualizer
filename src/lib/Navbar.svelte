@@ -27,6 +27,7 @@
   import html2canvas from "html2canvas";
 
   export let loadFile: (evt: any) => any;
+  export let onLoadData: ((data: any) => void) | null = null;
 
   export let startPoint: Point;
   export let lines: Line[];
@@ -284,6 +285,7 @@
     bind:secondLines
     bind:secondShapes
     bind:secondSequence
+    {onLoadData}
   />
 {/if}
 
