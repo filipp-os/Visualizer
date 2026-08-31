@@ -1,14 +1,14 @@
 {
-  "//": "Copy this file to visualizer.export.json (git-ignored) and edit the paths.",
+  "//": "Copy this file to visualizer.export.json (git-ignored) and set projectRoot for YOUR machine. Leave the rest as-is so every teammate's generated code lands in the same place.",
   "//projectRoot": "Absolute path to your TeamCode Java SOURCE ROOT — the folder that directly contains 'org/'. On a stock FTC project that is .../TeamCode/src/main/java",
-  "projectRoot": "/absolute/path/to/FtcRobotController/TeamCode/src/main/java",
+  "projectRoot": "/absolute/path/to/your/robot-code/TeamCode/src/main/java",
 
-  "//packages": "Where visualizer output goes, RELATIVE to projectRoot. Keep these separate from your hand-written code so you always know which classes came from the visualizer. The Java 'package' line in each generated file is derived from these paths.",
+  "//packages": "Where visualizer output goes, RELATIVE to projectRoot. Kept separate from hand-written code. The Java 'package' line in each generated file is derived from these. Keep identical across the whole team.",
   "packages": {
-    "paths": "org/firstinspires/ftc/teamcode/vis/paths",
-    "auto": "org/firstinspires/ftc/teamcode/vis/auto"
+    "paths": "org/firstinspires/ftc/teamcode/visualizer/paths",
+    "auto": "org/firstinspires/ftc/teamcode/visualizer/opmodes"
   },
 
-  "//allowGit": "When true, the bridge reports the current git branch / dirty state in the export panel (read-only, it never commits for you).",
+  "//allowGit": "true = the export panel shows the git branch and offers per-file 'git add' / 'git rm --cached'. It never commits or pushes.",
   "allowGit": true
 }
