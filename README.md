@@ -7,18 +7,32 @@ Android Studio project" bridge added.
 
 ## Run it
 
-Requires **Node 18 or newer** and **git**.
+Requires **Node 18 or newer** and **git**. Clone it once:
 
 ```bash
 git clone https://github.com/filipp-os/Visualizer.git
 ```
+
+### One-click launch (recommended)
+
+After cloning, use the launcher for your OS from the project folder. It installs
+dependencies the first time, starts the dev server, and opens your browser.
+Close the window to stop it.
+
+| OS | File | How |
+| --- | --- | --- |
+| **Windows** | `start-visualizer.cmd` | double-click |
+| **macOS** | `start-visualizer.command` | double-click (first time: right-click → Open) |
+| **Linux** | `start-visualizer.sh` | `chmod +x` it, then run it or use `start-visualizer.desktop` |
+
+### Or run it manually
 
 ```bash
 cd Visualizer && npm install
 ```
 
 ```bash
-npm run dev
+npm start
 ```
 
 Open the URL it prints (default <http://localhost:5173>) in any browser.

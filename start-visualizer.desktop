@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Pedro Pathing Visualizer
+Comment=Start the path visualizer dev server and open it in the browser
+Exec=bash -c 'cd "$(dirname "$(readlink -f %k)")" && exec ./start-visualizer.sh'
+Terminal=true
+Icon=applications-development
+Categories=Development;Education;
+
+# Linux only. To use it:
+#   1. chmod +x start-visualizer.sh start-visualizer.desktop
+#   2. Double-click this file (your file manager may ask you to "Trust" /
+#      "Allow Launching" the first time), or right-click it and choose
+#      "Add to Favorites" / "Pin to taskbar" for an app-like icon.
+# If your desktop doesn't expand %k, just run ./start-visualizer.sh from a
+# terminal instead.
