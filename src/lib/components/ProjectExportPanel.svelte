@@ -4,6 +4,8 @@
     bridgeStatus,
     bridgeList,
     bridgeWrite,
+    bridgeDelete,
+    bridgeGit,
     type BridgeStatus,
     type BridgeEntry,
     type IvyKind,
@@ -22,8 +24,11 @@
     packageName: string,
   ) => Promise<{ className: string; code: string }>;
 
-  const type: IvyKind = kind === "ivy-paths" ? "paths" : "auto";
-  const kindLabel = kind === "ivy-paths" ? "Paths class" : "OpMode";
+  // The dialog reuses one panel instance and just swaps `kind` when you flip
+  // between "IVY — Paths class" and "IVY — Full OpMode", so these must be
+  // reactive, not computed once.
+  $: type = (kind === "ivy-paths" ? "paths" : "auto") as IvyKind;
+  $: kindLabel = kind === "ivy-paths" ? "Paths class" : "OpMode";
 
   let status: BridgeStatus | null = null;
   let entries: BridgeEntry[] = [];
@@ -33,9 +38,29 @@
   let existsPrompt = false; // "write new" hit an existing file
   let selectedExisting = "";
   let confirmOverwrite = false;
+  let confirmDelete = false;
 
   $: pkgName = status?.javaPackages?.[type] ?? "";
   $: managedExisting = entries.filter((e) => e.type === type && e.managed);
+  $: selectedEntry =
+    managedExisting.find((e) => e.className === selectedExisting) ?? null;
+  // git button only makes sense when tracking state is actually known
+  $: gitKnown = typeof selectedEntry?.tracked === "boolean";
+
+  function resetSelectionUi() {
+    confirmOverwrite = false;
+    confirmDelete = false;
+  }
+
+  // Clear per-target UI state when the format switches.
+  let lastType: IvyKind | "" = "";
+  $: if (type !== lastType) {
+    lastType = type;
+    result = null;
+    existsPrompt = false;
+    selectedExisting = "";
+    resetSelectionUi();
+  }
 
   async function recheck() {
     checking = true;
@@ -44,7 +69,7 @@
     status = await bridgeStatus();
     entries =
       status && status.configured && status.rootExists
-        ? await bridgeList(type)
+        ? await bridgeList() // both types; filtered per `type` reactively
         : [];
     checking = false;
   }
@@ -73,7 +98,7 @@
           ok: true,
           text: `${r.action === "updated" ? "Updated" : "Created"} ${r.relPath}`,
         };
-        entries = await bridgeList(type);
+        entries = await bridgeList();
       } else {
         result = { ok: false, text: `Write failed (${r.error || r.status}).` };
       }
@@ -111,7 +136,64 @@
       result = r.ok
         ? { ok: true, text: `Updated ${r.relPath}` }
         : { ok: false, text: `Write failed (${r.error || r.status}).` };
-      if (r.ok) entries = await bridgeList(type);
+      if (r.ok) entries = await bridgeList();
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function deleteSelected() {
+    if (!selectedExisting || busy) return;
+    if (!confirmDelete) {
+      confirmDelete = true;
+      return;
+    }
+    confirmDelete = false;
+    busy = true;
+    result = null;
+    try {
+      const r = await bridgeDelete({ type, className: selectedExisting });
+      if (r.ok) {
+        const parts: string[] = [];
+        if (r.fileDeleted) parts.push("file");
+        if (r.manifestRemoved) parts.push("manifest entry");
+        let text = parts.length
+          ? `Deleted ${selectedExisting} (${parts.join(" + ")})`
+          : `${selectedExisting} was already gone — nothing to delete`;
+        if (r.wasTracked) text += " · git shows a deletion to stage";
+        result = { ok: true, text };
+        selectedExisting = "";
+        entries = await bridgeList();
+      } else {
+        result = { ok: false, text: `Delete failed (${r.error || r.status}).` };
+      }
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function toggleGit() {
+    if (!selectedEntry || busy) return;
+    const act: "add" | "untrack" = selectedEntry.tracked ? "untrack" : "add";
+    busy = true;
+    result = null;
+    try {
+      const r = await bridgeGit({ type, className: selectedExisting, action: act });
+      if (r.ok) {
+        result = {
+          ok: true,
+          text:
+            act === "add"
+              ? `Added ${selectedExisting}.java to git${r.forced ? " (forced past .gitignore)" : ""}`
+              : `Untracked ${selectedExisting}.java — working file kept`,
+        };
+        entries = await bridgeList();
+      } else {
+        result = {
+          ok: false,
+          text: `git ${act} failed (${r.error || r.status})${r.detail ? `: ${r.detail}` : ""}`,
+        };
+      }
     } finally {
       busy = false;
     }
@@ -195,12 +277,16 @@
           <span class="text-neutral-400">|</span>
           <select
             bind:value={selectedExisting}
-            on:change={() => (confirmOverwrite = false)}
+            on:change={resetSelectionUi}
             class="px-2 py-1 text-sm rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">Update existing…</option>
+            <option value="">Select a class…</option>
             {#each managedExisting as e (e.className)}
-              <option value={e.className}>{e.className}</option>
+              <option value={e.className}>
+                {e.className}{e.tracked === false ? " (untracked)" : ""}{!e.existsOnDisk
+                  ? " (missing)"
+                  : ""}
+              </option>
             {/each}
           </select>
           <button
@@ -212,6 +298,31 @@
           >
             {confirmOverwrite ? `Confirm overwrite ${selectedExisting}` : "Update"}
           </button>
+
+          {#if selectedExisting}
+            <button
+              class="px-3 py-1 rounded-md text-sm text-white disabled:opacity-50 {confirmDelete
+                ? 'bg-red-600 hover:bg-red-500'
+                : 'bg-neutral-600 hover:bg-neutral-500'}"
+              disabled={busy}
+              on:click={deleteSelected}
+            >
+              {confirmDelete ? `Confirm delete ${selectedExisting}` : "Delete"}
+            </button>
+
+            {#if status.allowGit && gitKnown}
+              <button
+                class="px-3 py-1 rounded-md text-sm bg-neutral-600 hover:bg-neutral-500 text-white disabled:opacity-50"
+                disabled={busy}
+                on:click={toggleGit}
+                title={selectedEntry?.tracked
+                  ? "git rm --cached — stop tracking, keep the file"
+                  : "git add — start tracking this file"}
+              >
+                {selectedEntry?.tracked ? "Untrack (git)" : "Add to git"}
+              </button>
+            {/if}
+          {/if}
         {/if}
       </div>
 

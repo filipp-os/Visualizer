@@ -124,6 +124,48 @@ function gitInfo(cwd) {
   });
 }
 
+// Run git in `cwd`; never rejects — returns the exit code + output so callers
+// can branch on it.
+function execGit(cwd, args) {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", cwd, ...args],
+      { timeout: 5000 },
+      (err, stdout, stderr) => {
+        resolve({
+          code: err ? (typeof err.code === "number" ? err.code : 1) : 0,
+          stdout: String(stdout || ""),
+          stderr: String(stderr || ""),
+        });
+      },
+    );
+  });
+}
+
+// Set of tracked paths (relative to projectRoot) under the given rel dirs, or
+// null when projectRoot isn't a git work tree.
+async function gitTrackedSet(projectRoot, relDirs) {
+  const { code, stdout } = await execGit(projectRoot, [
+    "ls-files",
+    "-z",
+    "--",
+    ...relDirs,
+  ]);
+  if (code !== 0) return null;
+  return new Set(stdout.split("\0").filter(Boolean));
+}
+
+async function gitIsTracked(projectRoot, relPath) {
+  const { code } = await execGit(projectRoot, [
+    "ls-files",
+    "--error-unmatch",
+    "--",
+    relPath,
+  ]);
+  return code === 0;
+}
+
 async function readManifest(projectRoot) {
   try {
     const raw = await fsp.readFile(
@@ -224,6 +266,13 @@ function makeHandler(getRootDir) {
     if (action === "list" && req.method === "GET") {
       const wanted = url.searchParams.get("type");
       const manifest = await readManifest(projectRoot);
+      const relDirs = ["paths", "auto"]
+        .filter((t) => !wanted || wanted === t)
+        .map((t) => norm.packages[t]);
+      const tracked = norm.allowGit
+        ? await gitTrackedSet(projectRoot, relDirs)
+        : null;
+      const trackedOf = (relPath) => (tracked ? tracked.has(relPath) : null);
       const out = [];
       for (const type of ["paths", "auto"]) {
         if (wanted && wanted !== type) continue;
@@ -233,22 +282,29 @@ function makeHandler(getRootDir) {
         const seen = new Set();
         for (const e of manifest.entries.filter((x) => x.type === type)) {
           seen.add(e.className);
-          out.push({ ...e, managed: true, existsOnDisk: onDisk.has(e.className) });
+          out.push({
+            ...e,
+            managed: true,
+            existsOnDisk: onDisk.has(e.className),
+            tracked: trackedOf(e.relPath),
+          });
         }
         for (const className of onDisk) {
           if (seen.has(className)) continue;
+          const relPath = `${relDir}/${className}.java`;
           out.push({
             type,
             className,
-            relPath: `${relDir}/${className}.java`,
+            relPath,
             source: null,
             exportedAt: null,
             managed: false,
             existsOnDisk: true,
+            tracked: trackedOf(relPath),
           });
         }
       }
-      return sendJson(res, 200, { entries: out });
+      return sendJson(res, 200, { entries: out, gitAvailable: tracked !== null });
     }
 
     // ---- read (for pre-overwrite diff/preview) -----------------------
@@ -338,6 +394,154 @@ function makeHandler(getRootDir) {
         bytes: Buffer.byteLength(contents),
         hash,
       });
+    }
+
+    // ---- delete ---------------------------------------------------
+    if (action === "delete" && req.method === "POST") {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        return sendJson(res, 400, { error: "bad-json" });
+      }
+      const { type, className } = body || {};
+      if (!["paths", "auto"].includes(type)) {
+        return sendJson(res, 400, { error: "bad-type" });
+      }
+      if (!CLASS_RE.test(String(className || ""))) {
+        return sendJson(res, 400, { error: "bad-classname" });
+      }
+
+      const relDir = norm.packages[type];
+      const absDir = safeJoin(projectRoot, relDir);
+      const absFile = absDir ? safeJoin(absDir, className + ".java") : null;
+      if (!absDir || !absFile) {
+        return sendJson(res, 400, { error: "path-escape" });
+      }
+      const relPath = `${relDir}/${className}.java`;
+
+      const wasTracked = norm.allowGit
+        ? await gitIsTracked(projectRoot, relPath)
+        : false;
+
+      let fileDeleted = false;
+      if (fs.existsSync(absFile)) {
+        await fsp.rm(absFile);
+        fileDeleted = true;
+      }
+
+      // Prune the manifest even when the file was already gone.
+      const manifest = await readManifest(projectRoot);
+      const before = manifest.entries.length;
+      manifest.entries = manifest.entries.filter(
+        (e) => !(e.type === type && e.className === className),
+      );
+      const manifestRemoved = manifest.entries.length < before;
+      if (manifestRemoved) await writeManifest(projectRoot, manifest);
+
+      return sendJson(res, 200, {
+        ok: true,
+        relPath,
+        fileDeleted,
+        manifestRemoved,
+        wasTracked,
+      });
+    }
+
+    // ---- git add / untrack --------------------------------------
+    if (action === "git" && req.method === "POST") {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        return sendJson(res, 400, { error: "bad-json" });
+      }
+      const { type, className, action: gitAction } = body || {};
+      if (!norm.allowGit) {
+        return sendJson(res, 409, {
+          error: "git-disabled",
+          detail: 'Set "allowGit": true in visualizer.export.json.',
+        });
+      }
+      if (!["paths", "auto"].includes(type)) {
+        return sendJson(res, 400, { error: "bad-type" });
+      }
+      if (!CLASS_RE.test(String(className || ""))) {
+        return sendJson(res, 400, { error: "bad-classname" });
+      }
+      if (!["add", "untrack"].includes(gitAction)) {
+        return sendJson(res, 400, { error: "bad-action" });
+      }
+
+      const relDir = norm.packages[type];
+      const absDir = safeJoin(projectRoot, relDir);
+      const absFile = absDir ? safeJoin(absDir, className + ".java") : null;
+      if (!absDir || !absFile) {
+        return sendJson(res, 400, { error: "path-escape" });
+      }
+      const relPath = `${relDir}/${className}.java`;
+
+      const inTree = await execGit(projectRoot, [
+        "rev-parse",
+        "--is-inside-work-tree",
+      ]);
+      if (inTree.code !== 0) {
+        return sendJson(res, 409, {
+          error: "no-repo",
+          detail: "projectRoot is not inside a git work tree.",
+        });
+      }
+
+      if (gitAction === "add") {
+        if (!fs.existsSync(absFile)) {
+          return sendJson(res, 404, { error: "not-found" });
+        }
+        let r = await execGit(projectRoot, ["add", "--", relPath]);
+        let forced = false;
+        // `git add` refuses (or silently skips) ignored paths — the user
+        // explicitly asked to track this file, so force past .gitignore if the
+        // plain add didn't take.
+        if (!(await gitIsTracked(projectRoot, relPath))) {
+          forced = true;
+          r = await execGit(projectRoot, ["add", "-f", "--", relPath]);
+        }
+        const nowTracked = await gitIsTracked(projectRoot, relPath);
+        if (!nowTracked) {
+          return sendJson(res, 500, {
+            error: "git-failed",
+            detail: r.stderr.trim() || "file is still untracked after git add",
+          });
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          action: "add",
+          tracked: true,
+          forced,
+        });
+      }
+
+      // untrack — drop from the index, keep the working file
+      if (!(await gitIsTracked(projectRoot, relPath))) {
+        return sendJson(res, 200, {
+          ok: true,
+          action: "untrack",
+          tracked: false,
+          note: "was not tracked",
+        });
+      }
+      const r = await execGit(projectRoot, [
+        "rm",
+        "--cached",
+        "--",
+        relPath,
+      ]);
+      if (r.code !== 0) {
+        return sendJson(res, 500, {
+          error: "git-failed",
+          detail: r.stderr.trim(),
+        });
+      }
+      return sendJson(res, 200, { ok: true, action: "untrack", tracked: false });
     }
 
     return sendJson(res, 404, { error: "unknown-action", action });

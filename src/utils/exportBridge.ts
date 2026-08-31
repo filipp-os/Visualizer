@@ -30,6 +30,9 @@ export interface BridgeEntry {
   hash?: string;
   managed?: boolean;
   existsOnDisk?: boolean;
+  // true / false when git tracking is known, null when git is unavailable or
+  // allowGit is off.
+  tracked?: boolean | null;
 }
 
 export interface BridgeWriteResult {
@@ -119,6 +122,75 @@ export async function bridgeWrite(input: {
       error: data?.error,
     };
   } catch (e) {
+    return { ok: false, status: 0, error: "network" };
+  }
+}
+
+export interface BridgeDeleteResult {
+  ok: boolean;
+  status: number;
+  fileDeleted?: boolean;
+  manifestRemoved?: boolean;
+  wasTracked?: boolean;
+  relPath?: string;
+  error?: string;
+}
+
+export async function bridgeDelete(input: {
+  type: IvyKind;
+  className: string;
+}): Promise<BridgeDeleteResult> {
+  try {
+    const { ok, status, data } = await call("delete", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return {
+      ok: ok && data?.ok !== false,
+      status,
+      fileDeleted: data?.fileDeleted,
+      manifestRemoved: data?.manifestRemoved,
+      wasTracked: data?.wasTracked,
+      relPath: data?.relPath,
+      error: data?.error,
+    };
+  } catch {
+    return { ok: false, status: 0, error: "network" };
+  }
+}
+
+export interface BridgeGitResult {
+  ok: boolean;
+  status: number;
+  action?: "add" | "untrack";
+  tracked?: boolean;
+  forced?: boolean;
+  note?: string;
+  error?: string;
+  detail?: string;
+}
+
+export async function bridgeGit(input: {
+  type: IvyKind;
+  className: string;
+  action: "add" | "untrack";
+}): Promise<BridgeGitResult> {
+  try {
+    const { ok, status, data } = await call("git", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return {
+      ok: ok && data?.ok !== false,
+      status,
+      action: data?.action,
+      tracked: data?.tracked,
+      forced: data?.forced,
+      note: data?.note,
+      error: data?.error,
+      detail: data?.detail,
+    };
+  } catch {
     return { ok: false, status: 0, error: "network" };
   }
 }

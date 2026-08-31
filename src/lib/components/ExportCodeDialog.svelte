@@ -313,14 +313,14 @@
             {#if exportFormat === "ivy-paths"}
               <label
                 class="text-xs font-light text-neutral-700 dark:text-neutral-400 flex items-center gap-1"
-                title="Adds `activeX = isRed ? X.mirror() : X` so the class mirrors for the RED alliance at runtime"
+                title="Constructs from your Robot (ClosePaths.java style): follower from robot.drivetrain, alliance from robot.alliance, activeX = isRed ? X.mirror() : X"
               >
                 <input
                   type="checkbox"
                   bind:checked={ivyAllianceMirror}
                   on:change={regenerateIvy}
                 />
-                Alliance-mirror code
+                Robot + alliance mirror
               </label>
             {:else}
               <label

@@ -50,14 +50,21 @@ because the write happens in the local Node process that serves the app.
 
 - **Write new class** — generates the file into the right package. If a class of
   that name already exists it refuses and offers **Overwrite it**.
-- **Update existing…** — pick a class the visualizer made before and overwrite
-  it in place (two clicks: select, then confirm).
+- **Select a class…** — pick a class the visualizer made before, then:
+  - **Update** — regenerate and overwrite it in place (two clicks).
+  - **Delete** — remove the `.java` file *and* its manifest entry (two clicks).
+    Works even if the file was already deleted by hand — it just cleans up the
+    manifest. It never touches git; if the file was tracked, `git` will show a
+    deletion for you to stage.
+  - **Add to git / Untrack (git)** — `git add` the file, or `git rm --cached`
+    it (stops tracking, keeps the file). Needs `"allowGit": true`. "Add to git"
+    forces past `.gitignore` if the folder is ignored.
 - **Paths classes** go to `packages.paths`, **full OpModes** to `packages.auto`,
   so visualizer output never mixes with your own classes.
 
 Every generated file starts with a banner comment naming the source `.pp` and
 the export time. A manifest at `<projectRoot>/.visualizer-manifest.json` tracks
-what the visualizer has written (that's what powers the "Update existing" list).
+what the visualizer has written (that's what powers the class list).
 
 The `package` line in each file is derived from where it's written, so it always
 matches its folder regardless of the package shown in the on-screen preview.
@@ -69,7 +76,8 @@ matches its folder regardless of the package shown in the on-screen preview.
 - **Loopback only.** Requests from anything other than `127.0.0.1` are refused.
 - **Confined + `.java` only.** Writes cannot escape `projectRoot`, and only
   `*.java` (plus the manifest) can be written.
-- **No git actions.** `allowGit` only shows the branch/dirty state; the bridge
-  never stages, commits, or pushes. Commit the `vis/` files yourself.
+- **Git: index only.** With `"allowGit": true` the panel shows the branch and
+  offers per-file `git add` / `git rm --cached`. The bridge never commits,
+  pushes, or deletes anything through git — you commit the changes yourself.
 - Updating the visualizer for the team = `git pull` this repo once. Generated
   classes live in *your* project repo, not here.

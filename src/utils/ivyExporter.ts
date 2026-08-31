@@ -13,7 +13,11 @@ const FIELD_LENGTH = 141.5;
 export interface IvyPathsOptions {
   className?: string;
   packageName?: string;
-  // Style A only: emit `activeX = isRed ? X.mirror() : X` runtime mirroring.
+  // The constructor always takes your Robot and pulls the Follower off
+  // robot.drivetrain (ClosePaths.java style). When true it additionally
+  // derives the alliance from robot.alliance and emits
+  // `activeX = isRed ? X.mirror() : X` runtime mirroring; when false the
+  // poses are used directly with no mirroring.
   allianceMirror?: boolean;
 }
 
@@ -322,6 +326,24 @@ export async function generateIvyPathsClass(
 
   const methods = model.chains.map((cm) => renderMethod(cm, ref)).join("\n\n");
 
+  // The class is always constructed from your Robot (like ClosePaths.java): it
+  // pulls the Follower off the drivetrain so the rest of your code stays the
+  // same. When mirroring it also derives the alliance from `robot.alliance`.
+  const projectImports = mirror
+    ? `// NOTE: these imports are project-specific — adjust Robot, Alliance and
+// FollowPath to match your package layout.
+import org.firstinspires.ftc.teamcode.Config.Robot;
+import org.firstinspires.ftc.teamcode.pedroPathing.FollowPath;
+import org.firstinspires.ftc.teamcode.utilities.Alliance;`
+    : `// NOTE: these imports are project-specific — adjust Robot and FollowPath
+// to match your package layout.
+import org.firstinspires.ftc.teamcode.Config.Robot;
+import org.firstinspires.ftc.teamcode.pedroPathing.FollowPath;`;
+
+  const fieldLines = mirror
+    ? `    private final Follower follower;\n    Alliance alliance;`
+    : `    private final Follower follower;`;
+
   let mirrorFields = "";
   let ctor: string;
   if (mirror) {
@@ -329,8 +351,10 @@ export async function generateIvyPathsClass(
       `\n    // Active poses used by the paths so the statics aren't mutated by repeated mirrors\n` +
       `    public final Pose ${model.poseDecls.map((d) => activeName(d.name)).join(", ")};\n`;
     ctor =
-      `    public ${cls}(Follower follower, boolean isRed) {\n` +
-      `        this.follower = follower;\n` +
+      `    public ${cls}(Robot robot) {\n` +
+      `        this.follower = robot.drivetrain.getFollower();\n` +
+      `        boolean isRed = robot.alliance == Alliance.RED;\n` +
+      `        alliance = robot.alliance;\n\n` +
       model.poseDecls
         .map(
           (d) =>
@@ -340,8 +364,8 @@ export async function generateIvyPathsClass(
       `\n    }`;
   } else {
     ctor =
-      `    public ${cls}(Follower follower) {\n` +
-      `        this.follower = follower;\n` +
+      `    public ${cls}(Robot robot) {\n` +
+      `        this.follower = robot.drivetrain.getFollower();\n` +
       `    }`;
   }
 
@@ -355,13 +379,11 @@ import com.pedropathing.geometry.Pose;
 import com.pedropathing.ivy.CommandBuilder;
 import com.pedropathing.paths.PathChain;
 
-// NOTE: FollowPath is the IVY path-follow command wrapper used in your project.
-// Adjust this import if yours lives elsewhere.
-import org.firstinspires.ftc.teamcode.pedroPathing.FollowPath;
+${projectImports}
 
 @Configurable
 public class ${cls} {
-    private final Follower follower;
+${fieldLines}
 
 ${poseDeclLines}
 ${mirrorFields}
@@ -424,17 +446,22 @@ import com.pedropathing.ivy.groups.Groups;
 import com.pedropathing.paths.PathChain;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 
-// NOTE: these are project-specific — adjust the base OpMode, Robot and
-// FollowPath imports to match your setup.
+// NOTE: these are project-specific — adjust the base OpMode, Robot, Alliance
+// and FollowPath imports to match your setup.
 import org.firstinspires.ftc.teamcode.Config.Command.CommandOpMode;
 import org.firstinspires.ftc.teamcode.Config.Robot;
 import org.firstinspires.ftc.teamcode.pedroPathing.FollowPath;
+import org.firstinspires.ftc.teamcode.utilities.Alliance;
 
 @Configurable
 @Autonomous(name = "${cls}", group = "Auto")
 public class ${cls} extends CommandOpMode {
     private Robot robot;
     private Follower follower;
+
+    // Default alliance — the Robot constructor requires one. Change to
+    // Alliance.RED (or subclass this OpMode) for the red-side auto.
+    private Alliance alliance = Alliance.BLUE;
 
     // ---- Poses (generated from the visualizer${opts.mirrorPoses ? ", mirrored" : ""}) ----
 ${poseDeclLines}
@@ -444,7 +471,7 @@ ${methods}
 
     @Override
     public void init() {
-        robot = new Robot(hardwareMap, gamepad1);
+        robot = new Robot(hardwareMap, alliance, gamepad1);
         follower = robot.drivetrain.getFollower();
         follower.setStartingPose(start);
         follower.update();
