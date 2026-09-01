@@ -27,12 +27,15 @@ install_linux_launcher() {
   local icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
   mkdir -p "$apps" "$icons" || return 0
   cp -f "$SCRIPT_DIR/assets/visualizer.png" "$icons/pedro-visualizer.png" 2>/dev/null || return 0
+  # Exec is the absolute path to the script (not a `bash -c` wrapper) so every
+  # desktop environment accepts it as a launcher and lets you pin it.
   cat > "$apps/pedro-visualizer.desktop" <<EOF || return 0
 [Desktop Entry]
 Type=Application
 Name=Pedro Visualizer
 Comment=Path visualizer for Pedro Pathing
-Exec=bash -c 'cd "$SCRIPT_DIR" && exec ./start-visualizer.sh'
+Exec="$SCRIPT_DIR/start-visualizer.sh"
+Path=$SCRIPT_DIR
 Icon=pedro-visualizer
 Terminal=true
 Categories=Development;Education;

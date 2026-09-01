@@ -30,3 +30,6 @@ visualizer.export.json
 
 # tsc --build declaration emitted from tsconfig.node.json
 /vite.config.d.ts
+
+# per-machine launcher marker
+.shortcut-v2

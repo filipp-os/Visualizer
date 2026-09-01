@@ -25,6 +25,11 @@ qlmanage -t -s 1024 -o "$WORK" "$SRC" >/dev/null 2>&1
 MASTER="$WORK/$(basename "$SRC").png"
 [ -f "$MASTER" ] || { echo "qlmanage produced no PNG"; exit 1; }
 
+# QuickLook ignores the SVG's rounded-corner clipPath, so it leaves opaque
+# white corners. Re-apply the rounding to the master before downscaling.
+echo "Rounding corners ..."
+node "$(dirname "$0")/round-corners.mjs" "$MASTER" 0.2
+
 for s in 16 24 32 48 64 128 256 512 1024; do
   sips -z "$s" "$s" "$MASTER" --out "$WORK/png-$s.png" >/dev/null
 done
@@ -44,17 +49,7 @@ cp "$WORK/png-1024.png" "$ISET/icon_512x512@2x.png"
 iconutil -c icns "$ISET" -o assets/visualizer.icns
 
 echo "Building .ico ..."
-node -e '
-const fs=require("fs");
-const W=process.argv[1], sizes=[16,24,32,48,64,128,256];
-const imgs=sizes.map(s=>({s,buf:fs.readFileSync(`${W}/png-${s}.png`)}));
-const h=Buffer.alloc(6); h.writeUInt16LE(1,2); h.writeUInt16LE(imgs.length,4);
-const dir=Buffer.alloc(16*imgs.length); let off=6+16*imgs.length;
-imgs.forEach((im,i)=>{const o=i*16;const d=im.s>=256?0:im.s;
-  dir.writeUInt8(d,o);dir.writeUInt8(d,o+1);dir.writeUInt16LE(1,o+4);dir.writeUInt16LE(32,o+6);
-  dir.writeUInt32LE(im.buf.length,o+8);dir.writeUInt32LE(off,o+12);off+=im.buf.length;});
-fs.writeFileSync("assets/visualizer.ico",Buffer.concat([h,dir,...imgs.map(x=>x.buf)]));
-' "$WORK"
+node "$(dirname "$0")/png-to-ico.mjs" assets/visualizer.ico "$WORK"
 
 cp "$WORK/png-256.png"  assets/visualizer.png
 cp "$WORK/png-512.png"  assets/visualizer-512.png

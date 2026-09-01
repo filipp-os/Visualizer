@@ -11,11 +11,13 @@ echo Folder: %CD%
 echo.
 
 rem Drop a nicely-iconed "Pedro Visualizer" shortcut on the Desktop the first
-rem time, so from then on there's a duck icon to double-click.
+rem time (and refresh it if this launcher's shortcut logic changed), so there's
+rem a duck icon you can double-click AND pin to the taskbar.
 set "PV_LNK=%USERPROFILE%\Desktop\Pedro Visualizer.lnk"
-if not exist "%PV_LNK%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%PV_LNK%'); $s.TargetPath='%~f0'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0assets\visualizer.ico,0'; $s.Description='Pedro Pathing Visualizer'; $s.Save()" >nul 2>nul
-  if exist "%PV_LNK%" echo Created a "Pedro Visualizer" shortcut on your Desktop.
+if not exist "%~dp0.shortcut-v2" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make-shortcut.ps1" -CmdPath "%~f0" -IconPath "%~dp0assets\visualizer.ico" -LinkPath "%PV_LNK%" >nul 2>nul
+  type nul > "%~dp0.shortcut-v2"
+  if exist "%PV_LNK%" echo Put a pinnable "Pedro Visualizer" shortcut on your Desktop.
   echo.
 )
 
