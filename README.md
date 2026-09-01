@@ -66,3 +66,5 @@ short note explaining why.
 - If it says you have local changes blocking the update, from the project folder:
   `git stash` (keep them) or `git reset --hard origin/main` (discard them), then
   launch again.
+
+  test for auto-Update
