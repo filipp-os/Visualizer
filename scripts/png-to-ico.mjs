@@ -98,9 +98,20 @@ function bmpFrame({ width, height, rgba }) {
       xor[d + 3] = rgba[s + 3]; // A
     }
   }
-  // 1bpp AND mask, rows padded to 32 bits. All zero: alpha channel does the work.
+  // 1bpp AND mask (bottom-up, rows padded to 32 bits, MSB = leftmost pixel).
+  // bit 1 = transparent. Windows' legacy icon path uses THIS for the silhouette
+  // and ignores the 32-bit alpha, so without it the rounded corners come back
+  // as opaque squares on the desktop.
   const maskStride = ((width + 31) >> 5) << 2;
   const mask = Buffer.alloc(maskStride * height);
+  for (let y = 0; y < height; y++) {
+    const srcY = height - 1 - y;
+    for (let x = 0; x < width; x++) {
+      if (rgba[(srcY * width + x) * 4 + 3] < 128) {
+        mask[y * maskStride + (x >> 3)] |= 0x80 >> (x & 7);
+      }
+    }
+  }
   const hdr = Buffer.alloc(40);
   hdr.writeUInt32LE(40, 0); // biSize
   hdr.writeInt32LE(width, 4); // biWidth

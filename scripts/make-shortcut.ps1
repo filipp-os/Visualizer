@@ -24,6 +24,9 @@ try {
   $s.Description       = 'Pedro Pathing Visualizer'
   $s.Save()
   Write-Output "shortcut written: $LinkPath"
+
+  # Nudge Explorer to re-read icons (it caches old ones aggressively).
+  try { & "$env:SystemRoot\system32\ie4uinit.exe" -show } catch {}
 } catch {
   # Never fail the launcher over a shortcut.
   Write-Output "shortcut skipped: $($_.Exception.Message)"

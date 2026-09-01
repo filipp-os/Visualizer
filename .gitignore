@@ -32,4 +32,4 @@ visualizer.export.json
 /vite.config.d.ts
 
 # per-machine launcher marker
-.shortcut-v2
+.shortcut-v*

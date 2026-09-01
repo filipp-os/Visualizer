@@ -138,8 +138,17 @@ function roundCorners(width, height, rgba, frac) {
         }
       }
       if (cov < 1) {
-        const i = (y * width + x) * 4 + 3;
-        rgba[i] = Math.round(rgba[i] * cov);
+        const i = (y * width + x) * 4;
+        rgba[i + 3] = Math.round(rgba[i + 3] * cov);
+        // Also clear the colour of fully cut pixels. Windows' legacy icon
+        // path can ignore the alpha channel and show the RGB straight — if
+        // that RGB is white you get white corners. Black blends into the
+        // logo's black frame, so a failed cut is at worst invisible.
+        if (rgba[i + 3] === 0) {
+          rgba[i] = 0;
+          rgba[i + 1] = 0;
+          rgba[i + 2] = 0;
+        }
       }
     }
   }
