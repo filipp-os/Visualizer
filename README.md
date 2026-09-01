@@ -16,8 +16,8 @@ git clone https://github.com/filipp-os/Visualizer.git
 ### One-click launch (recommended)
 
 After cloning, use the launcher for your OS from the project folder. It installs
-dependencies the first time, starts the dev server, and opens your browser.
-Close the window to stop it.
+dependencies the first time, **pulls the latest version**, starts the dev
+server, and opens your browser. Close the window to stop it.
 
 | OS | File | How |
 | --- | --- | --- |
@@ -54,8 +54,15 @@ Full details, including the Delete and git-add/untrack buttons, are in
 
 ## Staying up to date
 
-```bash
-git pull && npm install
-```
+**Automatic.** Every time you launch (the one-click launcher, or `npm start`),
+it checks GitHub, fast-forwards to the newest version, and re-installs
+dependencies if they changed — then starts. When you're offline, or have your
+own local edits to the visualizer, it skips the update and starts anyway with a
+short note explaining why.
 
-Then restart `npm run dev`.
+- Update without starting: `npm run update`
+- Turn auto-update off: set the env var `VIS_NO_UPDATE=1` (or use `npm run dev`,
+  which never touches your checkout)
+- If it says you have local changes blocking the update, from the project folder:
+  `git stash` (keep them) or `git reset --hard origin/main` (discard them), then
+  launch again.

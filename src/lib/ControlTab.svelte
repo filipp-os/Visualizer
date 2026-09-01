@@ -1685,11 +1685,24 @@
     hotkeys("ctrl+d,command+d", act(() => duplicateIdx(selectedIndices()[0])));
     hotkeys("ctrl+v,command+v", act(() => pasteAfter(selectedIndices()[0])));
     hotkeys("escape", () => clearSelection());
+
+    // Click anywhere that isn't a bubble / group header / the selection bar
+    // clears the current selection. Skipped while a context menu is open (its
+    // own backdrop handles dismissal, and its actions still need the selection).
+    const clearOnOutsideClick = (e: PointerEvent) => {
+      if (!selectedKeys.length || ctxMenu) return;
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest("[data-keep-selection]")) return;
+      clearSelection();
+    };
+    document.addEventListener("pointerdown", clearOnOutsideClick);
+
     return () => {
       hotkeys.unbind("ctrl+c,command+c");
       hotkeys.unbind("ctrl+d,command+d");
       hotkeys.unbind("ctrl+v,command+v");
       hotkeys.unbind("escape");
+      document.removeEventListener("pointerdown", clearOnOutsideClick);
     };
   });
 </script>
@@ -1771,6 +1784,7 @@
 
     {#if selectedKeys.length > 0}
       <div
+        data-keep-selection
         class="w-full flex items-center gap-2 rounded-md bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-3 py-1.5 text-xs shrink-0"
       >
         <span class="font-semibold text-blue-800 dark:text-blue-200"
@@ -1852,6 +1866,7 @@
             style="padding-left: {oDepth * 14}px"
           >
             <div
+              data-keep-selection
               class="flex w-full items-center gap-2 px-2 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 shadow-sm"
               role="presentation"
               on:contextmenu={(e) => onGroupContextMenu(oInst.id, e)}
@@ -1961,6 +1976,7 @@
         {/if}
 
         <div
+          data-keep-selection
           class="w-full transition-opacity duration-150 {chain.length
             ? 'border-l-2 border-emerald-300 dark:border-emerald-700'
             : ''}"

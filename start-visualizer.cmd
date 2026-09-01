@@ -31,8 +31,9 @@ if not exist node_modules (
   echo.
 )
 
-echo Starting the dev server. A browser tab will open automatically.
-echo Leave this window open while you use the visualizer; close it to stop.
+echo Checking for updates and starting the dev server...
+echo A browser tab will open automatically. Leave this window open while you
+echo use the visualizer; close it to stop the server.
 echo.
 call npm start
 
