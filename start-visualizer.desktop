@@ -1,16 +1,17 @@
 [Desktop Entry]
 Type=Application
-Name=Pedro Pathing Visualizer
-Comment=Start the path visualizer dev server and open it in the browser
+Name=Pedro Visualizer
+Comment=Path visualizer for Pedro Pathing
 Exec=bash -c 'cd "$(dirname "$(readlink -f %k)")" && exec ./start-visualizer.sh'
+Icon=pedro-visualizer
 Terminal=true
-Icon=applications-development
 Categories=Development;Education;
 
-# Linux only. To use it:
-#   1. chmod +x start-visualizer.sh start-visualizer.desktop
-#   2. Double-click this file (your file manager may ask you to "Trust" /
-#      "Allow Launching" the first time), or right-click it and choose
-#      "Add to Favorites" / "Pin to taskbar" for an app-like icon.
-# If your desktop doesn't expand %k, just run ./start-visualizer.sh from a
-# terminal instead.
+# Linux only.
+# The easiest path: run  ./start-visualizer.sh  once from a terminal. That
+# installs a "Pedro Visualizer" entry (with the duck icon) into your
+# application menu, which you can then pin to the dock.
+#
+# To use THIS file directly instead: chmod +x it, double-click, and choose
+# "Trust" / "Allow Launching" if prompted. The icon shows once the .sh above
+# has run at least once (it installs the icon named "pedro-visualizer").

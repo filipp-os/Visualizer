@@ -15,15 +15,19 @@ git clone https://github.com/filipp-os/Visualizer.git
 
 ### One-click launch (recommended)
 
-After cloning, use the launcher for your OS from the project folder. It installs
-dependencies the first time, **pulls the latest version**, starts the dev
+After cloning, launch it for your OS from the project folder. The launcher
+installs dependencies the first time, pulls the latest version, starts the dev
 server, and opens your browser. Close the window to stop it.
 
-| OS | File | How |
+| OS | Launch | Gets you a duck icon by… |
 | --- | --- | --- |
-| **Windows** | `start-visualizer.cmd` | double-click |
-| **macOS** | `start-visualizer.command` | double-click (first time: right-click → Open) |
-| **Linux** | `start-visualizer.sh` | `chmod +x` it, then run it or use `start-visualizer.desktop` |
+| **Windows** | double-click `start-visualizer.cmd` | it drops a **Pedro Visualizer** shortcut (duck icon) on your Desktop the first time — use that afterwards |
+| **macOS** | double-click **`Pedro Visualizer.app`** (first time: right-click → Open) | the app bundle already has the icon; drag it to the Dock |
+| **Linux** | run `./start-visualizer.sh` once from a terminal | it adds a **Pedro Visualizer** entry (duck icon) to your app menu — pin it to the dock |
+
+The raw scripts (`start-visualizer.cmd` / `.command` / `.sh`) all still work
+directly if you prefer. Icons live in `assets/`; regenerate them from
+`assets/visualizer.svg` with `bash scripts/make-icons.sh` (macOS).
 
 ### Or run it manually
 
@@ -66,5 +70,3 @@ short note explaining why.
 - If it says you have local changes blocking the update, from the project folder:
   `git stash` (keep them) or `git reset --hard origin/main` (discard them), then
   launch again.
-
-  test for auto-Update

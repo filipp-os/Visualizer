@@ -1,0 +1,7 @@
+#!/bin/bash
+# Executable of the "Pedro Visualizer.app" bundle. It just opens the repo's
+# start-visualizer.command in a new Terminal window (so there's a window to
+# close when you want to stop the server).
+here="$(cd "$(dirname "$0")" && pwd)"                 # .../Pedro Visualizer.app/Contents/MacOS
+repo="$(cd "$here/../../.." && pwd)"                   # repo root (parent of the .app)
+open -a Terminal "$repo/start-visualizer.command"

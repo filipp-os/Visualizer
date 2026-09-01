@@ -10,6 +10,15 @@ echo Pedro Pathing Visualizer
 echo Folder: %CD%
 echo.
 
+rem Drop a nicely-iconed "Pedro Visualizer" shortcut on the Desktop the first
+rem time, so from then on there's a duck icon to double-click.
+set "PV_LNK=%USERPROFILE%\Desktop\Pedro Visualizer.lnk"
+if not exist "%PV_LNK%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%PV_LNK%'); $s.TargetPath='%~f0'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0assets\visualizer.ico,0'; $s.Description='Pedro Pathing Visualizer'; $s.Save()" >nul 2>nul
+  if exist "%PV_LNK%" echo Created a "Pedro Visualizer" shortcut on your Desktop.
+  echo.
+)
+
 where npm >nul 2>nul
 if errorlevel 1 (
   echo ERROR: Node.js / npm is not installed ^(or not on PATH^).
