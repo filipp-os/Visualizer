@@ -29,6 +29,9 @@ The raw scripts (`start-visualizer.cmd` / `.command` / `.sh`) all still work
 directly if you prefer. Icons live in `assets/`; regenerate them from
 `assets/visualizer.svg` with `bash scripts/make-icons.sh` (macOS).
 
+**Windows: icon looks wrong / has white corners?** Windows caches icons by
+path. Double-click `scripts\fix-icon-cache.cmd` (no admin needed) and relaunch.
+
 ### Or run it manually
 
 ```bash
