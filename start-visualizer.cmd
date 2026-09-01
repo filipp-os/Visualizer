@@ -10,14 +10,17 @@ echo Pedro Pathing Visualizer
 echo Folder: %CD%
 echo.
 
-rem Drop a nicely-iconed "Pedro Visualizer" shortcut on the Desktop the first
-rem time (and refresh it if this launcher's shortcut logic changed), so there's
-rem a duck icon you can double-click AND pin to the taskbar.
+rem Keep a nicely-iconed "Pedro Visualizer" shortcut on the Desktop: create it
+rem if it's missing (first run, or you deleted it), and refresh it once whenever
+rem this launcher's shortcut logic changes. It's pinnable to the taskbar.
 set "PV_LNK=%USERPROFILE%\Desktop\Pedro Visualizer.lnk"
-if not exist "%~dp0.shortcut-v3" (
+set "PV_MAKE="
+if not exist "%PV_LNK%" set "PV_MAKE=1"
+if not exist "%~dp0.shortcut-v3" set "PV_MAKE=1"
+if defined PV_MAKE (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make-shortcut.ps1" -CmdPath "%~f0" -IconPath "%~dp0assets\visualizer.ico" -LinkPath "%PV_LNK%" >nul 2>nul
   type nul > "%~dp0.shortcut-v3"
-  if exist "%PV_LNK%" echo Put a pinnable "Pedro Visualizer" shortcut on your Desktop.
+  if exist "%PV_LNK%" (echo Put a pinnable "Pedro Visualizer" shortcut on your Desktop.) else (echo Could not create the Desktop shortcut - run the visualizer once more, or make one by hand pointing at this file.)
   echo.
 )
 
